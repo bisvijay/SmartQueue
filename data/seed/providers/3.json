@@ -1,0 +1,17 @@
+{
+  "id": 3,
+  "name": "Little Bird Coffee",
+  "category": "Food & drink",
+  "description": "Good coffee, warm pastries, and a sunny window seat.",
+  "address": "220 Union Street, Seattle",
+  "distance": "1.1 mi",
+  "wait": 6,
+  "people": 2,
+  "rating": "4.7",
+  "reviews": 216,
+  "status": "Open",
+  "hours": "Closes at 8:00 PM",
+  "accent": "peach",
+  "icon": "\u2615",
+  "services": ["Coffee", "Breakfast", "Pickup"]
+}

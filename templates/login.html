@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Log in — SmartQueue</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="app-shell registration-shell">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="{{ url_for('home') }}" aria-label="SmartQueue home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>smartqueue</span>
+          </a>
+          <a class="nav-link" href="{{ url_for('register') }}">Create account</a>
+        </div>
+      </header>
+      <main class="registration-page">
+        <section class="registration-card">
+          <div class="registration-heading">
+            <p class="eyebrow">WELCOME BACK</p>
+            <h1>Good to see<br /><em>you again.</em></h1>
+            <p>Sign in to pick up where you left off.</p>
+          </div>
+          {% if error %}<div class="registration-errors" role="alert">{{ error }}</div>{% endif %}
+          <form class="registration-form" action="{{ url_for('login') }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <div class="registration-field">
+              <label for="identifier">Email address or phone number</label>
+              <input id="identifier" name="identifier" autocomplete="username" required autofocus placeholder="you@example.com or +1 206 555 0134" />
+            </div>
+            <div class="registration-field">
+              <label for="password">Password</label>
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+            </div>
+            <button class="button button-dark registration-submit" type="submit">Log in <span aria-hidden="true">→</span></button>
+          </form>
+          <p class="login-register-link">New to SmartQueue? <a href="{{ url_for('register') }}">Create an account</a></p>
+        </section>
+      </main>
+      <footer class="registration-footer"><a href="{{ url_for('home') }}">← Back to SmartQueue</a><span>Your time is yours.</span></footer>
+    </div>
+  </body>
+</html>

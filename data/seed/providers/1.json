@@ -1,0 +1,17 @@
+{
+  "id": 1,
+  "name": "Willow & Sage",
+  "category": "Salon",
+  "description": "A neighborhood salon for a little you-time.",
+  "address": "1421 4th Avenue, Seattle",
+  "distance": "0.4 mi",
+  "wait": 12,
+  "people": 3,
+  "rating": "4.9",
+  "reviews": 128,
+  "status": "Open",
+  "hours": "Closes at 7:00 PM",
+  "accent": "lavender",
+  "icon": "\u2733",
+  "services": ["Haircut", "Blowout", "Color"]
+}

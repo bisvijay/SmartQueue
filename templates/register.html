@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="description" content="Create a SmartQueue customer or provider account." />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Create your account — SmartQueue</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  </head>
+  <body>
+    <div class="app-shell registration-shell">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="{{ url_for('home') }}" aria-label="SmartQueue home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>smartqueue</span>
+          </a>
+          <a class="nav-link" href="{{ url_for('login') }}">Log in</a>
+        </div>
+      </header>
+
+      <main class="registration-page">
+        <section class="registration-card">
+          <div class="registration-heading">
+            <p class="eyebrow">WELCOME TO SMARTQUEUE</p>
+            {% if created %}
+            <h1>You’re on the list.</h1>
+            <p>Your account is ready. Sign in to manage your business or start finding your place in line.</p>
+            {% else %}
+            <h1>Make room for<br /><em>your day.</em></h1>
+            <p>Create an account to find your place in line or bring your business to SmartQueue.</p>
+            {% endif %}
+          </div>
+
+          {% if created %}
+          <div class="registration-success" role="status">
+            <span class="queue-panel-icon" aria-hidden="true">✓</span>
+            <div><strong>Registration complete</strong><p>Your account has been saved. You can now sign in.</p></div>
+          </div>
+          <a class="button button-dark registration-submit" href="{{ url_for('login') }}">Log in to SmartQueue <span aria-hidden="true">→</span></a>
+          {% else %}
+          {% if errors %}
+          <div class="registration-errors" role="alert">
+            <strong>Please review your details.</strong>
+            <ul>{% for message in errors.values() %}<li>{{ message }}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
+
+          <form class="registration-form" action="{{ url_for('register') }}" method="post" enctype="multipart/form-data" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <fieldset class="account-type">
+              <legend>I’m joining as</legend>
+              <div class="account-type-options">
+                <label class="account-type-card {% if form.get('role', 'customer') == 'customer' %}selected{% endif %}">
+                  <input type="radio" name="role" value="customer" {% if form.get('role', 'customer') == 'customer' %}checked{% endif %} />
+                  <span class="account-type-icon" aria-hidden="true">♙</span>
+                  <span><strong>Customer</strong><small>Find and join queues</small></span>
+                </label>
+                <label class="account-type-card {% if form.get('role') == 'provider' %}selected{% endif %}">
+                  <input type="radio" name="role" value="provider" {% if form.get('role') == 'provider' %}checked{% endif %} />
+                  <span class="account-type-icon" aria-hidden="true">⌂</span>
+                  <span><strong>Service provider</strong><small>Add your business listing</small></span>
+                </label>
+              </div>
+              {% if errors.get('role') %}<small class="field-error">{{ errors.role }}</small>{% endif %}
+            </fieldset>
+
+            <div class="registration-field">
+              <label for="name">Your name</label>
+              <input id="name" name="name" autocomplete="name" maxlength="100" required value="{{ form.get('name', '') }}" placeholder="e.g. Jamie Rivera" />
+              {% if errors.get('name') %}<small class="field-error">{{ errors.name }}</small>{% endif %}
+            </div>
+            <div class="registration-field">
+              <label for="email">Email address <span>(optional)</span></label>
+              <input id="email" name="email" type="email" autocomplete="email" maxlength="254" value="{{ form.get('email', '') }}" placeholder="you@example.com" />
+              {% if errors.get('email') %}<small class="field-error">{{ errors.email }}</small>{% endif %}
+            </div>
+            <div class="registration-field">
+              <label for="phone">Phone number <span>(include country code)</span></label>
+              <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="24" value="{{ form.get('phone', '') }}" placeholder="+1 206 555 0134" />
+              <small>Enter an email, a phone number, or both.</small>
+              {% if errors.get('phone') %}<small class="field-error">{{ errors.phone }}</small>{% endif %}
+              {% if errors.get('contact') %}<small class="field-error">{{ errors.contact }}</small>{% endif %}
+            </div>
+            <div class="registration-field">
+              <label for="password">Password</label>
+              <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required placeholder="At least 10 characters" />
+              <small>Use at least 10 characters.</small>
+              {% if errors.get('password') %}<small class="field-error">{{ errors.password }}</small>{% endif %}
+            </div>
+            <div class="registration-field">
+              <label id="photo-label" for="photo">Profile photo <span>(optional)</span></label>
+              <input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" />
+              <small>JPEG, PNG, or WebP; up to 5 MB. Customer photos are private; provider photos appear on your business card.</small>
+              {% if photo_staged %}<small class="photo-staged" role="status">Your selected photo is saved and will be used when you submit this form.</small>{% endif %}
+              <div id="photo-preview" class="photo-preview" hidden><img id="photo-preview-image" alt="" /><span id="photo-preview-caption"></span></div>
+              {% if errors.get('photo') %}<small class="field-error">{{ errors.photo }}</small>{% endif %}
+            </div>
+
+            <section id="provider-fields" class="provider-registration-fields" {% if form.get('role', 'customer') != 'provider' %}hidden{% endif %}>
+              <div class="provider-fields-heading"><p class="eyebrow">YOUR BUSINESS</p><p>Tell customers a little about the place they’ll visit.</p></div>
+              <div class="registration-field">
+                <label for="business-name">Business name</label>
+                <input id="business-name" name="business_name" maxlength="120" value="{{ form.get('business_name', '') }}" placeholder="e.g. Willow & Sage" />
+                {% if errors.get('business_name') %}<small class="field-error">{{ errors.business_name }}</small>{% endif %}
+              </div>
+              <div class="registration-field">
+                <label for="category">Business category</label>
+                <select id="category" name="category">
+                  <option value="">Choose a category</option>
+                  {% for category in provider_categories %}
+                  <option value="{{ category }}" {% if form.get('category') == category %}selected{% endif %}>{{ category }}</option>
+                  {% endfor %}
+                </select>
+                {% if errors.get('category') %}<small class="field-error">{{ errors.category }}</small>{% endif %}
+              </div>
+              <div class="registration-field">
+                <label for="address">Business address</label>
+                <input id="address" name="address" autocomplete="street-address" maxlength="200" value="{{ form.get('address', '') }}" placeholder="Street, city, state" />
+                {% if errors.get('address') %}<small class="field-error">{{ errors.address }}</small>{% endif %}
+              </div>
+              <div class="registration-field">
+                <label for="services">Services <span>(optional, comma-separated)</span></label>
+                <input id="services" name="services" maxlength="500" value="{{ form.get('services', '') }}" placeholder="Haircut, color, blowout" />
+                {% if errors.get('services') %}<small class="field-error">{{ errors.services }}</small>{% endif %}
+              </div>
+            </section>
+
+            <button class="button button-dark registration-submit" type="submit">Create account <span aria-hidden="true">→</span></button>
+            <p class="registration-terms">By creating an account, you agree to use this local SmartQueue demo. Passwords are stored as salted hashes.</p>
+          </form>
+          {% endif %}
+        </section>
+      </main>
+      <footer class="registration-footer"><a href="{{ url_for('home') }}">← Back to SmartQueue</a><span>Your time is yours.</span></footer>
+    </div>
+  </body>
+</html>

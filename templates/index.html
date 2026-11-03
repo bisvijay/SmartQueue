@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="description" content="Find nearby services and spend less time waiting with SmartQueue." />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>SmartQueue — Your time, better spent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  </head>
+  <body>
+    {% macro logo() -%}
+    <a class="brand" href="#home" aria-label="SmartQueue home">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>smartqueue</span>
+    </a>
+    {%- endmacro %}
+
+    {% macro metric(label, value, change, icon) -%}
+    <article class="metric-card">
+      <div class="metric-top"><span>{{ label }}</span><span class="metric-icon">{{ icon }}</span></div>
+      <strong>{{ value }}</strong><small>{{ change }}</small>
+    </article>
+    {%- endmacro %}
+
+    <div class="app-shell" data-view="{{ view }}">
+      <header class="site-header">
+        <div class="header-inner">
+          {{ logo() }}
+          <nav class="main-nav" aria-label="Main navigation">
+            <button class="nav-link {% if view == 'customer' %}active{% endif %}" data-view="customer">Discover</button>
+            <a class="nav-link" href="#how-it-works">How it works</a>
+            <button class="nav-link {% if view == 'provider' %}active{% endif %}" data-view="provider">For providers</button>
+          </nav>
+          <div class="header-actions">
+            {% if queue and view == 'customer' %}
+            <a class="queue-shortcut" href="#my-queue"><span class="queue-dot"></span>My queue</a>
+            {% endif %}
+            {% if current_user %}
+            <form action="{{ url_for('logout') }}" method="post" class="logout-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><button class="nav-link" type="submit">Sign out</button></form>
+            {% else %}
+            <a class="button button-dark signup-link" href="{{ url_for('register') }}">Sign up</a>
+            <a class="nav-link login-link" href="{{ url_for('login') }}">Log in</a>
+            {% endif %}
+            {% if not current_user %}
+            <button class="avatar-button" aria-label="Open admin dashboard" title="Demo admin dashboard" data-view="admin">JD</button>
+            {% endif %}
+          </div>
+        </div>
+      </header>
+
+      <div class="app-error" role="alert" hidden></div>
+
+      {% if view == 'customer' %}
+      <main id="home">
+        <section class="hero">
+          <div class="hero-inner">
+            <div class="hero-copy">
+              <span class="hero-kicker"><span class="pulse-dot"></span> YOUR NEIGHBORHOOD, IN REAL TIME</span>
+              <h1>Your time,<br />better <em>spent.</em></h1>
+              <p>Find a spot in line before you leave. More living, less waiting.</p>
+              <a class="hero-link" href="#discover">Find your place <span>↓</span></a>
+            </div>
+            <div class="hero-art" aria-hidden="true">
+              <div class="hero-sun"></div><div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div>
+              <div class="hero-ticket">
+                <div class="ticket-top"><span class="ticket-mark">✳</span><span>YOUR SPOT IS SAVED</span></div>
+                <div class="ticket-main"><span>Willow & Sage</span><strong>03</strong><small>in line · about 12 min</small></div>
+                <div class="ticket-progress"><i></i></div>
+              </div>
+              <span class="hero-spark spark-one">✦</span><span class="hero-spark spark-two">✳</span>
+              <span class="hero-caption">A little more<br />room in your day.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="discover-section" id="discover">
+          <div class="section-heading">
+            <div><p class="eyebrow">THE GOOD STUFF, RIGHT AROUND YOU</p><h2>Where to next?</h2></div>
+            <span class="updated-note"><span class="status-dot"></span> Queue snapshots · Seattle</span>
+          </div>
+          <div class="search-bar">
+            <label class="search-field">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <span class="sr-only">Search places or services</span>
+              <input id="search-input" type="search" placeholder="Try “coffee”, “haircut”, or a place name" />
+            </label>
+            <span class="search-divider"></span>
+            <label class="location-field">
+              <span class="location-icon" aria-hidden="true">⌖</span>
+              <span class="sr-only">Your location</span>
+              <input id="location-input" aria-label="Location" value="Seattle, WA" />
+              <span class="location-caret" aria-hidden="true">⌄</span>
+            </label>
+            <button class="search-submit" aria-label="Show search results" id="search-submit">→</button>
+          </div>
+          <div class="category-row" role="group" aria-label="Filter providers by category">
+            {% for label, icon in [('All services', '✳'), ('Salon', '✂'), ('Healthcare', '✚'), ('Food & drink', '☕'), ('Government', '⌂')] %}
+            <button class="category-chip {% if loop.first %}selected{% endif %}" data-category="{{ label }}" aria-pressed="{{ 'true' if loop.first else 'false' }}"><span aria-hidden="true">{{ icon }}</span>{{ label }}</button>
+            {% endfor %}
+            {% if current_user and current_user.role == 'customer' %}
+            <button class="category-chip" data-category="Favorites" aria-pressed="false"><span aria-hidden="true">♥</span>Favorites</button>
+            {% endif %}
+            <span class="results-location">Showing places near <strong id="location-label">Seattle, WA</strong></span>
+          </div>
+
+          {% if queue %}
+          {% set joined = providers|selectattr('id', 'equalto', queue.providerId)|first %}
+          {% if joined %}
+          <section class="my-queue panel" id="my-queue" aria-live="polite">
+            <div class="queue-panel-left">
+              <div class="queue-panel-icon" aria-hidden="true">✓</div>
+              <div><p class="eyebrow" id="queue-state">{% if queue.status == 'serving' %}YOU’RE BEING SERVED{% else %}YOU’RE ON THE LIST{% endif %}</p><h2>{{ joined.name }}</h2><p class="queue-panel-address">{{ joined.address }}</p></div>
+            </div>
+            <div class="queue-panel-stats">
+              <div><span class="queue-number" id="queue-position">{{ customer_position }}</span><span class="queue-label">Your place</span></div>
+              <div><span class="queue-number">~<span id="queue-wait">{{ customer_wait }}</span> <small>min</small></span><span class="queue-label">Estimated wait</span></div>
+            </div>
+            <div class="queue-panel-action">
+              <p><span class="status-dot"></span> We’ll keep your place here</p>
+              {% if queue.status == 'waiting' %}<button class="text-button" data-queue-id="{{ queue.id }}" id="leave-queue">Leave queue</button>{% endif %}
+            </div>
+          </section>
+          {% endif %}
+          {% endif %}
+
+          <div class="results-heading">
+            <div><h2>On your radar <span id="result-count">{{ providers|length }}</span></h2><p>Good places, with a little less guesswork.</p></div>
+            <button class="sort-button" id="all-nearby">All nearby <span aria-hidden="true">⌄</span></button>
+          </div>
+          {% if providers %}
+          <div class="provider-grid" id="provider-grid">
+            {% for provider in providers %}
+            <article class="provider-card" data-provider="{{ provider|tojson|forceescape }}" data-category="{{ provider.category }}" data-favorite="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">
+              <div class="provider-art {{ provider.accent }}">
+                {% if provider.photoId %}
+                <img class="provider-photo" src="{{ url_for('provider_photo', photo_id=provider.photoId) }}" alt="{{ provider.name }}" />
+                {% else %}
+                <span class="provider-art-icon" aria-hidden="true">{{ provider.icon }}</span>
+                {% endif %}
+                <span class="open-badge"><span class="status-dot"></span><span class="provider-status">{{ provider.status }}</span></span>
+                <span class="distance-badge">{{ provider.distance }}</span>
+              </div>
+              <div class="provider-content">
+                <div class="provider-heading">
+                  <div><p class="eyebrow">{{ provider.category }}</p><h3>{{ provider.name }}</h3></div>
+                  <div class="rating"><span aria-hidden="true">★</span> {{ provider.rating }} <span class="review-count">({{ provider.reviews }})</span></div>
+                </div>
+                <p class="provider-description">{{ provider.description }}</p>
+                <p class="provider-address"><span aria-hidden="true">⌖</span> {{ provider.address }}</p>
+                <div class="service-tags">{% for service in provider.services %}<span>{{ service }}</span>{% endfor %}</div>
+                <div class="queue-summary">
+                  <div class="queue-stat"><span class="queue-stat-icon people-icon" aria-hidden="true">♙</span><span><strong class="provider-people">{{ provider.people }} people</strong><small>in line</small></span></div>
+                  <div class="queue-stat"><span class="queue-stat-icon clock-icon" aria-hidden="true">◷</span><span><strong>~<span class="provider-wait">{{ provider.wait }}</span> min</strong><small>estimated wait</small></span></div>
+                </div>
+                <div class="card-footer">
+                  <span class="hours">{{ provider.hours }}</span>
+                  <div class="provider-card-actions">
+                    {% if current_user and current_user.role == 'customer' %}
+                    <button class="favorite-button {% if provider.id|string in favorite_ids %}is-favorite{% endif %}" data-provider-id="{{ provider.id }}" data-provider-name="{{ provider.name }}" aria-label="{% if provider.id|string in favorite_ids %}Remove {{ provider.name }} from favorites{% else %}Add {{ provider.name }} to favorites{% endif %}" aria-pressed="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">♥</button>
+                    {% endif %}
+                    {% if current_user and current_user.role == 'customer' %}
+                    <button class="button {% if queue and queue.providerId == provider.id %}button-joined{% else %}button-dark{% endif %} join-queue"
+                      data-provider-id="{{ provider.id }}" {% if provider.status != 'Open' and (not queue or queue.providerId != provider.id) %}disabled{% endif %}>
+                      {% if queue and queue.providerId == provider.id %}You’re in line ✓{% elif provider.status == 'Open' %}Join queue <span aria-hidden="true">↗</span>{% else %}Queue paused{% endif %}
+                    </button>
+                    {% elif not current_user %}
+                    <a class="button button-dark" href="{{ url_for('login') }}">Log in to join</a>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          <div class="empty-state" id="empty-state" hidden>
+            <span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Try another search or choose a different category.</p>
+            <button class="button button-dark" id="clear-filters">Clear filters</button>
+          </div>
+          {% else %}
+          <div class="empty-state"><span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Add providers to the data store to see them here.</p></div>
+          {% endif %}
+          <div class="demo-notice"><span aria-hidden="true">ⓘ</span><p><strong>Preview mode.</strong> Queue counts begin with sample data; queue actions are saved to this server’s JSON data store.</p></div>
+        </section>
+
+        <section class="how-section" id="how-it-works">
+          <div class="how-intro"><p class="eyebrow">A BETTER KIND OF WAIT</p><h2>Make room for<br /><em>your day.</em></h2></div>
+          <div class="how-steps">
+            <article><span>01</span><div><h3>Find your place</h3><p>See nearby services and their current wait, all in one spot.</p></div></article>
+            <article><span>02</span><div><h3>Save your spot</h3><p>Join a virtual queue and get a clear picture of what’s ahead.</p></div></article>
+            <article><span>03</span><div><h3>Arrive when it’s right</h3><p>Spend less time standing around and more time doing your thing.</p></div></article>
+          </div>
+        </section>
+      </main>
+      <footer class="site-footer">
+        <div class="footer-main">
+          <div class="footer-brand">{{ logo() }}<p>Make room for what matters.<br />Less waiting starts here.</p></div>
+          <div class="footer-links">
+            <div><strong>Explore</strong><a href="#discover">Find a service</a><a href="#how-it-works">How it works</a></div>
+            <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><button data-view="admin">Admin demo</button></div>
+            <div><strong>Say hello</strong><a href="mailto:hello@smartqueue.example">Contact us</a><a href="#home">Privacy &amp; terms</a></div>
+          </div>
+        </div>
+        <div class="footer-bottom"><span>© 2025 SmartQueue. Your time is yours.</span><span>Made for the in-between moments. <b>✳</b></span></div>
+      </footer>
+
+      {% elif view == 'provider' %}
+      {% if provider %}
+      <main class="dashboard-page" data-provider-id="{{ provider.id }}">
+        <div class="dashboard-top">
+          <div><p class="eyebrow">PROVIDER SPACE</p><h1>{{ current_user.name }} <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
+          <button class="button button-dark" id="toggle-open"><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
+        </div>
+        <div class="metric-grid">
+          {{ metric('People in queue', provider.people, 'Waiting or in service', '♙') }}
+          {{ metric('Estimated wait', provider.wait|string + ' min', 'Based on your service time', '◷') }}
+          {{ metric('Average service', provider.serviceDuration|default(15)|string + ' min', 'Your current estimate', '◴') }}
+          {{ metric('Service status', provider.status, 'Customer visibility', '✓') }}
+        </div>
+        <div class="provider-dashboard-grid">
+          <section class="dashboard-card live-queue-card">
+            <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>Today’s queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span></div>
+            <div class="queue-table-heading"><span>CUSTOMER</span><span>WAIT</span><span>STATUS / ACTION</span></div>
+            <div id="queue-rows" aria-live="polite">
+              {% for entry in provider_queue %}
+              <div class="queue-table-row">
+                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small>{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}</small></span></div>
+                <span class="wait-cell">{% if entry.status == 'serving' %}Now{% else %}~{{ entry.estimatedWait }} min{% endif %}</span>
+                <span class="queue-row-action">
+                  {% if entry.status == 'serving' %}
+                  <span class="table-status next-up">Serving</span>
+                  <button class="button button-complete queue-action" data-action="complete" data-queue-id="{{ entry.id }}">Complete</button>
+                  {% else %}
+                  <span class="table-status waiting">{% if loop.first %}Next up{% else %}Waiting{% endif %}</span>
+                  <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" {% if service_in_progress %}disabled{% endif %}>Start service</button>
+                  {% endif %}
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+            <p class="no-waiting" id="no-waiting" {% if provider_queue %}hidden{% endif %}>No one waiting. Enjoy the breather.</p>
+            <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
+          </section>
+          <section class="dashboard-card provider-profile-card">
+            <div class="dashboard-card-heading"><div><p class="eyebrow">YOUR PLACE</p><h2>Business settings</h2></div></div>
+            <form class="provider-settings-form" id="provider-settings">
+              <label>Business name<input name="name" maxlength="120" required value="{{ provider.name }}" /></label>
+              <label>Category<select name="category">{% for category in provider_categories %}<option value="{{ category }}" {% if category == provider.category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></label>
+              <label>Address<input name="address" maxlength="200" required value="{{ provider.address }}" /></label>
+              <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
+              <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
+              <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>
+              <button class="button button-dark full-width" type="submit">Save settings</button>
+            </form>
+            <p class="inline-notice" id="provider-settings-notice" role="status" hidden></p>
+          </section>
+        </div>
+        <div class="dashboard-disclaimer">Queue and business settings are saved to this server’s local data store.</div>
+      </main>
+      {% else %}
+      <main class="dashboard-page"><p>No provider records found.</p></main>
+      {% endif %}
+
+      {% else %}
+      <main class="dashboard-page">
+        <div class="dashboard-top"><div><p class="eyebrow">SMARTQUEUE · ADMIN</p><h1>Platform overview <span>✳</span></h1><p class="dashboard-subtitle">A quick look at what’s happening across the neighborhood.</p></div><span class="demo-admin-badge">Demo admin view</span></div>
+        <div class="metric-grid">
+          {{ metric('Service providers', providers|length, 'Sample records', '⌂') }}
+          {{ metric('Customers today', '—', 'No account data', '♙') }}
+          {{ metric('Active queues', providers|sum(attribute='people'), 'Across all categories', '◷') }}
+          {% set waits = providers|map(attribute='wait')|list %}
+          {% set avg_wait = ((waits|sum / (waits|length or 1))|round|int) %}
+          {{ metric('Avg. wait time', avg_wait|string + ' min', 'Sample estimate', '↘') }}
+        </div>
+        <section class="dashboard-card admin-provider-list">
+          <div class="dashboard-card-heading"><div><p class="eyebrow">PLATFORM HEALTH</p><h2>Service providers</h2></div><span class="demo-admin-badge">Sample records</span></div>
+          <div class="admin-table-heading"><span>PROVIDER</span><span>CATEGORY</span><span>WAITING</span><span>STATUS</span></div>
+          {% for provider in providers %}
+          <div class="admin-table-row">
+            <div class="customer-cell"><span class="admin-provider-icon {{ provider.accent }}">{{ provider.icon }}</span><strong>{{ provider.name }}</strong></div>
+            <span>{{ provider.category }}</span><span>{{ provider.people }} people · ~{{ provider.wait }} min</span>
+            <span class="table-status {% if provider.status == 'Open' %}next-up{% else %}waiting{% endif %}">{{ provider.status }}</span>
+          </div>
+          {% endfor %}
+        </section>
+        <div class="dashboard-disclaimer">Admin metrics and provider records are illustrative demo data. No user or provider accounts are connected.</div>
+      </main>
+      {% endif %}
+    </div>
+  </body>
+</html>

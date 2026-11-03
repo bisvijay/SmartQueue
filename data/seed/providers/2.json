@@ -1,0 +1,17 @@
+{
+  "id": 2,
+  "name": "Pine Street Family Clinic",
+  "category": "Healthcare",
+  "description": "Thoughtful care for every member of your family.",
+  "address": "808 Pine Street, Seattle",
+  "distance": "0.8 mi",
+  "wait": 25,
+  "people": 5,
+  "rating": "4.8",
+  "reviews": 94,
+  "status": "Open",
+  "hours": "Closes at 6:00 PM",
+  "accent": "mint",
+  "icon": "\u271A",
+  "services": ["Walk-in visit", "Vaccination", "Lab work"]
+}

@@ -1,0 +1,17 @@
+{
+  "id": 4,
+  "name": "Northline Service Center",
+  "category": "Government",
+  "description": "Friendly help with the things that keep life moving.",
+  "address": "500 5th Avenue, Seattle",
+  "distance": "1.3 mi",
+  "wait": 38,
+  "people": 8,
+  "rating": "4.6",
+  "reviews": 72,
+  "status": "Open",
+  "hours": "Closes at 5:00 PM",
+  "accent": "blue",
+  "icon": "\u2302",
+  "services": ["ID services", "Licensing", "Information"]
+}
