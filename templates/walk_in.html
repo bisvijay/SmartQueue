@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="description" content="Join {{ provider.name }}’s queue." />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Join {{ provider.name }}’s queue — SmartQueue</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="{{ url_for('home') }}" aria-label="SmartQueue home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>smartqueue</span>
+          </a>
+        </div>
+      </header>
+      <main class="public-walkin-page">
+        <section class="public-walkin-card">
+          <p class="eyebrow">JOIN THE QUEUE</p>
+          {% if success %}
+          <div class="public-walkin-success" role="status">
+            <span class="queue-panel-icon" aria-hidden="true">✓</span>
+            <div><h1>You’re on the list.</h1><p>Your place at {{ provider.name }} is saved.</p></div>
+          </div>
+          {% else %}
+          <h1>Welcome to {{ provider.name }}</h1>
+          <p class="public-walkin-intro">Add your details to join the queue. Your contact information is shared only with this provider.</p>
+          {% if error %}<p class="public-walkin-error" role="alert">{{ error }}</p>{% endif %}
+          {% if provider.status != 'Open' %}
+          <p class="public-walkin-paused" role="status">This provider is not accepting customers right now.</p>
+          {% else %}
+          <form class="public-walkin-form" method="post" action="{{ url_for('public_walk_in', provider_id=provider.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <label>Full name<input name="name" maxlength="100" autocomplete="name" required /></label>
+            <label>Email address <small>Enter an email, a phone number, or both</small><input name="email" type="email" maxlength="254" autocomplete="email" /></label>
+            <label>Phone number <small>Indian numbers default to +91; use +country code otherwise</small><input name="phone" type="tel" maxlength="24" autocomplete="tel" placeholder="98765 43210" /></label>
+            <label>Address (optional)<input name="address" maxlength="200" autocomplete="street-address" /></label>
+            <label>Service
+              <select name="service">
+                {% if provider.services %}
+                {% for service in provider.services %}<option value="{{ service }}">{{ service }}</option>{% endfor %}
+                {% else %}<option value="General service">General service</option>{% endif %}
+              </select>
+            </label>
+            <button class="button button-dark" type="submit">Join queue <span aria-hidden="true">→</span></button>
+          </form>
+          {% endif %}
+          {% endif %}
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

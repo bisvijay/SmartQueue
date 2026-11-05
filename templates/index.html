@@ -18,10 +18,10 @@
     </a>
     {%- endmacro %}
 
-    {% macro metric(label, value, change, icon) -%}
+    {% macro metric(label, value, change, icon, value_id=None) -%}
     <article class="metric-card">
       <div class="metric-top"><span>{{ label }}</span><span class="metric-icon">{{ icon }}</span></div>
-      <strong>{{ value }}</strong><small>{{ change }}</small>
+      <strong {% if value_id %}id="{{ value_id }}"{% endif %}>{{ value }}</strong><small>{{ change }}</small>
     </article>
     {%- endmacro %}
 
@@ -91,7 +91,7 @@
             <label class="location-field">
               <span class="location-icon" aria-hidden="true">⌖</span>
               <span class="sr-only">Your location</span>
-              <input id="location-input" aria-label="Location" value="Seattle, WA" />
+              <input id="location-input" aria-label="Location" placeholder="City, state, or ZIP" value="" />
               <span class="location-caret" aria-hidden="true">⌄</span>
             </label>
             <button class="search-submit" aria-label="Show search results" id="search-submit">→</button>
@@ -103,7 +103,7 @@
             {% if current_user and current_user.role == 'customer' %}
             <button class="category-chip" data-category="Favorites" aria-pressed="false"><span aria-hidden="true">♥</span>Favorites</button>
             {% endif %}
-            <span class="results-location">Showing places near <strong id="location-label">Seattle, WA</strong></span>
+            <span class="results-location">Showing places near <strong id="location-label">all locations</strong></span>
           </div>
 
           {% if queue %}
@@ -133,7 +133,7 @@
           {% if providers %}
           <div class="provider-grid" id="provider-grid">
             {% for provider in providers %}
-            <article class="provider-card" data-provider="{{ provider|tojson|forceescape }}" data-category="{{ provider.category }}" data-favorite="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">
+            <article class="provider-card" data-provider-id="{{ provider.id }}" data-provider="{{ provider|tojson|forceescape }}" data-category="{{ provider.category }}" data-favorite="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">
               <div class="provider-art {{ provider.accent }}">
                 {% if provider.photoId %}
                 <img class="provider-photo" src="{{ url_for('provider_photo', photo_id=provider.photoId) }}" alt="{{ provider.name }}" />
@@ -150,6 +150,12 @@
                 </div>
                 <p class="provider-description">{{ provider.description }}</p>
                 <p class="provider-address"><span aria-hidden="true">⌖</span> {{ provider.address }}</p>
+                {% if provider.contactEmail or provider.contactPhone %}
+                <div class="provider-contact" aria-label="Business contact">
+                  {% if provider.contactEmail %}<a href="mailto:{{ provider.contactEmail }}"><span aria-hidden="true">✉</span>{{ provider.contactEmail }}</a>{% endif %}
+                  {% if provider.contactPhone %}<a href="tel:{{ provider.contactPhone }}"><span aria-hidden="true">☎</span>{{ provider.contactPhone }}</a>{% endif %}
+                </div>
+                {% endif %}
                 <div class="service-tags">{% for service in provider.services %}<span>{{ service }}</span>{% endfor %}</div>
                 <div class="queue-summary">
                   <div class="queue-stat"><span class="queue-stat-icon people-icon" aria-hidden="true">♙</span><span><strong class="provider-people">{{ provider.people }} people</strong><small>in line</small></span></div>
@@ -208,47 +214,76 @@
 
       {% elif view == 'provider' %}
       {% if provider %}
-      <main class="dashboard-page" data-provider-id="{{ provider.id }}">
+      <main class="dashboard-page" data-provider-id="{{ provider.id }}" data-service-duration="{{ provider.serviceDuration|default(15) }}">
         <div class="dashboard-top">
           <div><p class="eyebrow">PROVIDER SPACE</p><h1>{{ current_user.name }} <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
-          <button class="button button-dark" id="toggle-open"><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
+          <div class="dashboard-presentation-controls">
+            <button class="button button-outline" id="toggle-presentation" type="button" aria-expanded="false" aria-controls="provider-dashboard-content">Expand display</button>
+            <button class="button button-dark" id="toggle-open"><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
+          </div>
         </div>
+        <div id="provider-dashboard-content" class="provider-dashboard-content">
         <div class="metric-grid">
-          {{ metric('People in queue', provider.people, 'Waiting or in service', '♙') }}
-          {{ metric('Estimated wait', provider.wait|string + ' min', 'Based on your service time', '◷') }}
+          {{ metric('People in queue', provider.people, 'Waiting or in service', '♙', 'provider-people-metric') }}
+          {{ metric('Estimated wait', provider.wait|string + ' min', 'Based on your service time', '◷', 'provider-wait-metric') }}
           {{ metric('Average service', provider.serviceDuration|default(15)|string + ' min', 'Your current estimate', '◴') }}
           {{ metric('Service status', provider.status, 'Customer visibility', '✓') }}
         </div>
         <div class="provider-dashboard-grid">
           <section class="dashboard-card live-queue-card">
-            <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>Today’s queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span></div>
+            <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>People in queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span></div>
+            <div class="queue-filters" role="group" aria-label="Filter queue services">
+              <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
+              <button class="queue-filter" type="button" data-queue-filter="completed" aria-pressed="false">Completed services</button>
+            </div>
             <div class="queue-table-heading"><span>CUSTOMER</span><span>WAIT</span><span>STATUS / ACTION</span></div>
-            <div id="queue-rows" aria-live="polite">
+            <div id="queue-rows" aria-live="polite" data-service-duration="{{ provider.serviceDuration|default(15) }}">
               {% for entry in provider_queue %}
-              <div class="queue-table-row">
-                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small>{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}</small></span></div>
+              <div class="queue-table-row" data-queue-id="{{ entry.id }}">
+                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small class="customer-contact">{% if entry.customerPhone %}{{ entry.customerPhone }}{% endif %}{% if entry.customerPhone and entry.customerEmail %} · {% endif %}{% if entry.customerEmail %}{{ entry.customerEmail }}{% endif %}{% if entry.customerAddress %} · {{ entry.customerAddress }}{% endif %}{% if entry.customerService %} · {{ entry.customerService }}{% endif %}{% if not entry.customerPhone and not entry.customerEmail and not entry.customerAddress and not entry.customerService %}{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}{% endif %}</small></span></div>
                 <span class="wait-cell">{% if entry.status == 'serving' %}Now{% else %}~{{ entry.estimatedWait }} min{% endif %}</span>
                 <span class="queue-row-action">
                   {% if entry.status == 'serving' %}
                   <span class="table-status next-up">Serving</span>
-                  <button class="button button-complete queue-action" data-action="complete" data-queue-id="{{ entry.id }}">Complete</button>
+                  <button class="button button-complete queue-action" data-action="complete" data-queue-id="{{ entry.id }}" type="button">Complete</button>
                   {% else %}
                   <span class="table-status waiting">{% if loop.first %}Next up{% else %}Waiting{% endif %}</span>
-                  <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" {% if service_in_progress %}disabled{% endif %}>Start service</button>
+                  <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" type="button" {% if service_in_progress %}disabled{% endif %}>Start service</button>
                   {% endif %}
                 </span>
               </div>
               {% endfor %}
             </div>
             <p class="no-waiting" id="no-waiting" {% if provider_queue %}hidden{% endif %}>No one waiting. Enjoy the breather.</p>
-            <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
+            <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" type="button" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
+          </section>
+          <section class="dashboard-card provider-qr-card">
+            <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
+            <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
+            <p>Scan to find this listing and join the queue.</p>
           </section>
           <section class="dashboard-card provider-profile-card">
             <div class="dashboard-card-heading"><div><p class="eyebrow">YOUR PLACE</p><h2>Business settings</h2></div></div>
+            <p class="provider-settings-intro">Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by SmartQueue.</p>
+            <form class="provider-photo-form" id="provider-photo-form">
+              <div class="provider-photo-preview">
+                {% if provider.photoId %}
+                <img src="{{ url_for('provider_photo', photo_id=provider.photoId) }}" alt="Current photo for {{ provider.name }}" />
+                {% else %}
+                <span>No listing photo</span>
+                {% endif %}
+              </div>
+              <label>Business photo <small>JPEG, PNG, or WebP; under 5 MB</small><input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required /></label>
+              <button class="button button-outline full-width" type="submit">Update business photo</button>
+            </form>
             <form class="provider-settings-form" id="provider-settings">
               <label>Business name<input name="name" maxlength="120" required value="{{ provider.name }}" /></label>
               <label>Category<select name="category">{% for category in provider_categories %}<option value="{{ category }}" {% if category == provider.category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></label>
               <label>Address<input name="address" maxlength="200" required value="{{ provider.address }}" /></label>
+              <label>Tagline <small>Short description shown on your public listing (160 characters max)</small><input name="description" maxlength="160" value="{{ provider.description or '' }}" placeholder="e.g. Friendly neighborhood care, without the wait" /></label>
+              <label>Business contact email<input name="contactEmail" type="email" maxlength="254" value="{{ provider.contactEmail or '' }}" autocomplete="email" /></label>
+              <label>Business contact phone <small>Indian numbers default to +91; use +country code otherwise</small><input name="contactPhone" type="tel" maxlength="24" value="{{ provider.contactPhone or '' }}" autocomplete="tel" placeholder="98765 43210" /></label>
+              <p class="provider-contact-note">These details appear on your public business listing.</p>
               <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
               <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
               <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>
@@ -256,8 +291,27 @@
             </form>
             <p class="inline-notice" id="provider-settings-notice" role="status" hidden></p>
           </section>
+          <section class="dashboard-card walk-in-card">
+            <div class="dashboard-card-heading"><div><p class="eyebrow">IN PERSON</p><h2>Add walk-in</h2></div></div>
+            <form class="provider-settings-form" id="walk-in-form">
+              <label>Customer name<input name="name" maxlength="100" autocomplete="name" required /></label>
+              <label>Email address <small>Enter an email, a phone, or both</small><input name="email" type="email" maxlength="254" autocomplete="email" /></label>
+              <label>Phone number <small>Indian numbers default to +91; use +country code otherwise</small><input name="phone" type="tel" maxlength="24" autocomplete="tel" placeholder="98765 43210" /></label>
+              <label>Address (optional)<input name="address" maxlength="200" autocomplete="street-address" /></label>
+              <label>Service
+                <select name="service">
+                  {% if provider.services %}
+                  {% for service in provider.services %}<option value="{{ service }}">{{ service }}</option>{% endfor %}
+                  {% else %}<option value="General service">General service</option>{% endif %}
+                </select>
+              </label>
+              <button class="button button-dark full-width" type="submit">Add to queue</button>
+            </form>
+            <p class="inline-notice" id="walk-in-notice" role="status" hidden></p>
+          </section>
         </div>
         <div class="dashboard-disclaimer">Queue and business settings are saved to this server’s local data store.</div>
+        </div>
       </main>
       {% else %}
       <main class="dashboard-page"><p>No provider records found.</p></main>

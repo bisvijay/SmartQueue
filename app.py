@@ -5,11 +5,14 @@ import re
 import secrets
 import time
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+import qrcode
+from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
+from qrcode.image.svg import SvgPathImage
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -89,6 +92,14 @@ def create_app(test_config=None):
             raise ApiError(403, "You can only manage your own provider listing.")
         return user, provider
 
+    def provider_with_contact(provider):
+        provider = dict(provider)
+        owner_id = provider.get("ownerId")
+        owner = store.get("users", owner_id) if isinstance(owner_id, str) else None
+        provider["contactEmail"] = provider.get("contactEmail") or (owner.get("email") if owner else None)
+        provider["contactPhone"] = provider.get("contactPhone") or (owner.get("phone") if owner else None)
+        return provider
+
     def active_provider_queues(provider_id):
         return sorted(
             (
@@ -105,11 +116,125 @@ def create_app(test_config=None):
         provider["wait"] = len(active) * max(1, int(provider.get("serviceDuration", 15)))
         return provider
 
+    def provider_queue_view(provider, entries=None):
+        if entries is None:
+            entries = active_provider_queues(provider["id"])
+        service_duration = max(1, int(provider.get("serviceDuration", 15)))
+        serving_count = sum(entry.get("status") == "serving" for entry in entries)
+        waiting_ahead = 0
+        visible_entries = []
+        for entry in entries:
+            customer_id = entry.get("customerId")
+            customer = store.get("users", customer_id) if isinstance(customer_id, str) else None
+            visible = {
+                **entry,
+                "customerName": customer.get("name", "Customer") if customer else entry.get("customerName", "Customer"),
+                "customerEmail": customer.get("email") if customer else entry.get("email"),
+                "customerPhone": customer.get("phone") if customer else entry.get("phone"),
+                "customerAddress": entry.get("address"),
+                "customerService": entry.get("service"),
+            }
+            if entry.get("status") == "serving":
+                visible["estimatedWait"] = 0
+            elif entry.get("status") == "waiting":
+                visible["estimatedWait"] = service_duration * (waiting_ahead + serving_count)
+                waiting_ahead += 1
+            visible_entries.append(visible)
+        return visible_entries
+
+    def create_walk_in_entry(provider, body):
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be an object.")
+        if set(body) - {"name", "email", "phone", "address", "service"}:
+            raise ApiError(400, "Only walk-in customer details can be submitted.")
+        if provider.get("status") != "Open":
+            raise ApiError(409, "This provider is not accepting customers right now.")
+
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ApiError(400, "Enter a customer name (up to 100 characters).")
+        email_input = body.get("email", "")
+        phone_input = body.get("phone", "")
+        if not isinstance(email_input, str) or not isinstance(phone_input, str):
+            raise ApiError(400, "Enter a valid email address or phone number.")
+        email = normalized_email(email_input.strip()) if email_input.strip() else None
+        phone = normalized_phone(phone_input.strip()) if phone_input.strip() else None
+        if email_input.strip() and not email:
+            raise ApiError(400, "Enter a valid email address.")
+        if phone_input.strip() and not phone:
+            raise ApiError(400, "Enter a valid international phone number, including the + country code.")
+        if not email and not phone:
+            raise ApiError(400, "Enter an email address, a phone number, or both.")
+
+        address = body.get("address", "")
+        if not isinstance(address, str) or len(address.strip()) > 200:
+            raise ApiError(400, "Address must be no longer than 200 characters.")
+        services = provider.get("services") or []
+        service = body.get("service") or (services[0] if services else "General service")
+        if (
+            not isinstance(service, str)
+            or not service.strip()
+            or len(service.strip()) > 60
+            or (services and service.strip() not in services)
+        ):
+            raise ApiError(400, "Choose one of the services offered by this provider.")
+
+        active_queues = active_provider_queues(provider["id"])
+        service_duration = max(1, int(provider.get("serviceDuration", 15)))
+        entry = {
+            "id": str(uuid.uuid4()),
+            "customerId": None,
+            "providerId": provider["id"],
+            "customerName": name.strip(),
+            "email": email,
+            "phone": phone,
+            "address": address.strip(),
+            "service": service.strip(),
+            "source": "walk-in",
+            "peopleAhead": len(active_queues),
+            "wait": len(active_queues) * service_duration,
+            "status": "waiting",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        store.create("queues", entry["id"], entry, entry)
+        refresh_provider_metrics(provider)
+        store.put("providers", str(provider["id"]), provider, provider)
+        return entry
+
     def parse_services(value):
         services = [item.strip() for item in value.split(",") if item.strip()]
         if len(services) > 20 or any(len(service) > 60 for service in services):
             return None
         return services
+
+    def normalized_email(value):
+        if not isinstance(value, str) or not value:
+            return None
+        _, parsed_email = parseaddr(value)
+        if (
+            len(value) > 254
+            or parsed_email != value
+            or "@" not in value
+            or "." not in value.rsplit("@", 1)[-1]
+        ):
+            return None
+        return value.casefold()
+
+    def normalized_phone(value):
+        if not isinstance(value, str) or not value:
+            return None
+        if not PHONE_INPUT.fullmatch(value) or value.count("+") > 1:
+            return None
+        digits = re.sub(r"\D", "", value)
+        if value.startswith("+"):
+            phone = "+" + digits
+        elif len(digits) == 10:
+            phone = "+91" + digits
+        elif len(digits) == 11 and digits.startswith("0"):
+            phone = "+91" + digits[1:]
+        else:
+            return None
+        return phone if PHONE_E164.fullmatch(phone) else None
 
     def csrf_token():
         token = session.get("csrf_token")
@@ -243,7 +368,7 @@ def create_app(test_config=None):
 
     @app.get("/")
     def home():
-        providers = store.list("providers")
+        providers = [provider_with_contact(provider) for provider in store.list("providers")]
         queue = None
         user = current_user()
         if user and user.get("role") == "customer":
@@ -282,21 +407,9 @@ def create_app(test_config=None):
             if not provider or str(provider.get("ownerId")) != user["id"]:
                 session.clear()
                 return redirect(url_for("login"))
-            provider_queue = active_provider_queues(provider["id"])
-            service_duration = max(1, int(provider.get("serviceDuration", 15)))
+            provider = provider_with_contact(provider)
+            provider_queue = provider_queue_view(provider)
             service_in_progress = any(entry.get("status") == "serving" for entry in provider_queue)
-            waiting_ahead = 0
-            for entry in provider_queue:
-                customer_id = entry.get("customerId")
-                customer = store.get("users", customer_id) if isinstance(customer_id, str) else None
-                entry["customerName"] = customer.get("name", "Customer") if customer else "Customer"
-                if entry["status"] == "serving":
-                    entry["estimatedWait"] = 0
-                else:
-                    entry["estimatedWait"] = (
-                        service_duration * (waiting_ahead + sum(item.get("status") == "serving" for item in provider_queue))
-                    )
-                    waiting_ahead += 1
             provider = refresh_provider_metrics(provider)
         return render_template(
             "index.html",
@@ -317,10 +430,8 @@ def create_app(test_config=None):
         if request.method == "GET":
             return render_template("login.html", error=None)
         identifier = request.form.get("identifier", "").strip()
-        email_identifier = identifier.lower()
-        phone_identifier = ""
-        if identifier.startswith("+") and PHONE_INPUT.fullmatch(identifier):
-            phone_identifier = "+" + re.sub(r"\D", "", identifier)
+        email_identifier = identifier.casefold()
+        phone_identifier = normalized_phone(identifier) or ""
         user = next(
             (item for item in store.list("users")
              if (email_identifier and (item.get("email") or "").casefold() == email_identifier)
@@ -335,6 +446,66 @@ def create_app(test_config=None):
         session["csrf_token"] = secrets.token_urlsafe(32)
         destination = url_for("home", view="provider") if record["role"] == "provider" else url_for("home")
         return redirect(destination, code=303)
+
+    @app.route("/reset-password", methods=["GET", "POST"])
+    def reset_password():
+        if request.method == "GET":
+            return render_template("reset_password.html", error=None, success=False)
+
+        email = request.form.get("email", "").strip()
+        phone_input = request.form.get("phone", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if not normalized_email(email):
+            return render_template(
+                "reset_password.html",
+                error="Enter a valid email address.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        phone = normalized_phone(phone_input)
+        if not phone:
+            return render_template(
+                "reset_password.html",
+                error="Enter a valid international phone number, including the + country code.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        if len(password) < 10 or len(password) > 128:
+            return render_template(
+                "reset_password.html",
+                error="Use a password between 10 and 128 characters.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        if password != confirm_password:
+            return render_template(
+                "reset_password.html",
+                error="The passwords do not match.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+
+        with store.transaction():
+            account_index = next(
+                (
+                    account for account in store.list("users")
+                    if (account.get("email") or "").casefold() == email.casefold()
+                    and account.get("phone") == phone
+                ),
+                None,
+            )
+            if account_index:
+                account = store.get("users", account_index["id"])
+                if account:
+                    account["passwordHash"] = generate_password_hash(password)
+                    public_account = {
+                        key: value for key, value in account.items()
+                        if key != "passwordHash"
+                    }
+                    store.put("users", account["id"], account, public_account)
+
+        return render_template("reset_password.html", error=None, success=True)
 
     @app.post("/logout")
     def logout():
@@ -361,35 +532,24 @@ def create_app(test_config=None):
             "services": request.form.get("services", "").strip(),
         }
         password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
         errors = {}
-        normalized_phone = ""
+        normalized_phone_value = ""
         if form["email"]:
-            _, parsed_email = parseaddr(form["email"])
-            if (
-                len(form["email"]) > 254
-                or parsed_email != form["email"]
-                or "@" not in form["email"]
-                or "." not in form["email"].rsplit("@", 1)[-1]
-            ):
+            if not normalized_email(form["email"]):
                 errors["email"] = "Enter a valid email address."
         if form["phone"]:
-            phone_input = form["phone"].strip()
-            if (
-                not PHONE_INPUT.fullmatch(phone_input)
-                or not phone_input.startswith("+")
-                or phone_input.count("+") != 1
-            ):
+            normalized_phone_value = normalized_phone(form["phone"])
+            if not normalized_phone_value:
                 errors["phone"] = "Enter a valid international phone number, including the + country code."
-            else:
-                normalized_phone = "+" + re.sub(r"\D", "", phone_input)
-                if not PHONE_E164.fullmatch(normalized_phone):
-                    errors["phone"] = "Enter a valid international phone number, including the + country code."
         if not form["email"] and not form["phone"]:
             errors["contact"] = "Enter an email address, a phone number, or both."
         if not form["name"] or len(form["name"]) > 100:
             errors["name"] = "Enter your name (up to 100 characters)."
         if len(password) < 10 or len(password) > 128:
             errors["password"] = "Use a password between 10 and 128 characters."
+        if password != confirm_password:
+            errors["confirm_password"] = "The passwords do not match."
         if form["role"] not in {"customer", "provider"}:
             errors["role"] = "Choose a customer or provider account."
         services = parse_services(form["services"])
@@ -427,7 +587,7 @@ def create_app(test_config=None):
                 for user in users
             ):
                 errors["email"] = "An account with this email already exists."
-            if normalized_phone and any(user.get("phone") == normalized_phone for user in users):
+            if normalized_phone_value and any(user.get("phone") == normalized_phone_value for user in users):
                 errors["phone"] = "An account with this phone number already exists."
             if errors:
                 return render_registration(form, errors, status=409, photo_staged=staged_photo_path is not None)
@@ -437,7 +597,7 @@ def create_app(test_config=None):
                 "id": user_id,
                 "name": form["name"],
                 "email": form["email"] or None,
-                "phone": normalized_phone or None,
+                "phone": normalized_phone_value or None,
                 "role": form["role"],
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
@@ -466,6 +626,8 @@ def create_app(test_config=None):
                     "accent": accent,
                     "icon": icon,
                     "services": services,
+                    "contactEmail": form["email"] or None,
+                    "contactPhone": normalized_phone_value or None,
                 }
                 if photo_id:
                     provider["photoId"] = photo_id
@@ -519,7 +681,68 @@ def create_app(test_config=None):
 
     @app.get("/api/providers")
     def list_providers():
-        return jsonify(store.list("providers"))
+        return jsonify([provider_with_contact(provider) for provider in store.list("providers")])
+
+    @app.get("/providers/<provider_id>/qr.svg")
+    def provider_qr(provider_id):
+        provider = require_provider(provider_id)
+        target_url = url_for("public_walk_in", provider_id=provider["id"], _external=True)
+        qr = qrcode.QRCode(box_size=8, border=2)
+        qr.add_data(target_url)
+        qr.make(fit=True)
+        image = qr.make_image(image_factory=SvgPathImage)
+        output = BytesIO()
+        image.save(output)
+        response = make_response(output.getvalue())
+        response.headers["Content-Type"] = "image/svg+xml"
+        response.headers["Cache-Control"] = "public, max-age=3600"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @app.route("/providers/<provider_id>/walk-in", methods=["GET", "POST"])
+    def public_walk_in(provider_id):
+        provider = require_provider(provider_id)
+        if request.method == "GET":
+            return render_template(
+                "walk_in.html",
+                provider=provider,
+                success=request.args.get("joined") == "1",
+                error=None,
+            )
+        try:
+            with store.transaction():
+                provider = require_provider(provider_id)
+                body = request.form.to_dict()
+                body.pop("csrf_token", None)
+                create_walk_in_entry(provider, body)
+        except ApiError as error:
+            return render_template(
+                "walk_in.html",
+                provider=provider,
+                success=False,
+                error=str(error),
+            ), error.status
+        return redirect(url_for("public_walk_in", provider_id=provider_id, joined="1"), code=303)
+
+    @app.get("/api/providers/<provider_id>/queues")
+    def list_provider_queues(provider_id):
+        _, provider = require_owned_provider(provider_id)
+        queue_status = request.args.get("status", "active")
+        if queue_status == "active":
+            entries = active_provider_queues(provider_id)
+        elif queue_status == "completed":
+            entries = sorted(
+                (
+                    entry for entry in store.list("queues")
+                    if str(entry.get("providerId")) == str(provider_id)
+                    and entry.get("status") == "completed"
+                ),
+                key=lambda entry: entry.get("completedAt", ""),
+                reverse=True,
+            )
+        else:
+            raise ApiError(400, "Choose active or completed services.")
+        return jsonify(queues=provider_queue_view(provider, entries))
 
     @app.get("/api/queues/current")
     def current_queue():
@@ -633,12 +856,51 @@ def create_app(test_config=None):
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=entry, providers=store.list("providers"))
 
+    @app.post("/api/providers/<provider_id>/walk-ins")
+    def add_walk_in(provider_id):
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be a JSON object.")
+        with store.transaction():
+            _, provider = require_owned_provider(provider_id)
+            entry = create_walk_in_entry(provider, body)
+            return jsonify(queue=entry, providers=store.list("providers")), 201
+
+    @app.post("/api/providers/<provider_id>/photo")
+    def update_provider_photo(provider_id):
+        image_contents, image_error = process_photo(request.files.get("photo"))
+        if image_error:
+            raise ApiError(400, image_error)
+        if not image_contents:
+            raise ApiError(400, "Choose a JPEG, PNG, or WebP listing photo.")
+        with store.transaction():
+            _, provider = require_owned_provider(provider_id)
+            photo_id = f"{uuid.uuid4().hex}.jpg"
+            photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
+            photo_path.parent.mkdir(parents=True, exist_ok=True)
+            photo_path.write_bytes(image_contents)
+            previous_photo_id = provider.get("photoId")
+            provider["photoId"] = photo_id
+            try:
+                store.put("providers", str(provider["id"]), provider, provider)
+            except OSError:
+                photo_path.unlink(missing_ok=True)
+                raise
+            if isinstance(previous_photo_id, str) and re.fullmatch(r"[a-f0-9]{32}\.jpg", previous_photo_id):
+                previous_photo = Path(app.config["DATA_DIR"]) / "provider_photos" / previous_photo_id
+                if previous_photo != photo_path:
+                    previous_photo.unlink(missing_ok=True)
+            return jsonify(provider=provider)
+
     @app.patch("/api/providers/<provider_id>")
     def update_provider(provider_id):
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise ApiError(400, "Request body must be a JSON object.")
-        allowed = {"status", "name", "category", "address", "services", "hours", "serviceDuration"}
+        allowed = {
+            "status", "name", "category", "address", "description", "services", "hours",
+            "serviceDuration", "contactEmail", "contactPhone",
+        }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
         with store.transaction():
@@ -652,11 +914,32 @@ def create_app(test_config=None):
                     if not isinstance(body[key], str) or not body[key].strip() or len(body[key].strip()) > limit:
                         raise ApiError(400, f"{key} must contain 1 to {limit} characters.")
                     provider[key] = body[key].strip()
+            if "description" in body:
+                description = body["description"]
+                if not isinstance(description, str) or len(description.strip()) > 160:
+                    raise ApiError(400, "Tagline must be no more than 160 characters.")
+                provider["description"] = description.strip()
             if "category" in body:
                 if not isinstance(body["category"], str) or body["category"] not in PROVIDER_CATEGORIES:
                     raise ApiError(400, "Choose a valid business category.")
                 provider["category"] = body["category"]
                 provider["accent"], provider["icon"] = PROVIDER_CATEGORIES[body["category"]]
+            if "contactEmail" in body:
+                contact_email = body["contactEmail"]
+                if not isinstance(contact_email, str):
+                    raise ApiError(400, "Business email must be a valid email address.")
+                contact_email = contact_email.strip()
+                if contact_email and not normalized_email(contact_email):
+                    raise ApiError(400, "Business email must be a valid email address.")
+                provider["contactEmail"] = contact_email.casefold() or None
+            if "contactPhone" in body:
+                contact_phone = body["contactPhone"]
+                if not isinstance(contact_phone, str):
+                    raise ApiError(400, "Business phone must be a valid international phone number.")
+                contact_phone = contact_phone.strip()
+                if contact_phone and not normalized_phone(contact_phone):
+                    raise ApiError(400, "Business phone must be a valid international phone number.")
+                provider["contactPhone"] = normalized_phone(contact_phone) if contact_phone else None
             if "services" in body:
                 services = body["services"]
                 if (

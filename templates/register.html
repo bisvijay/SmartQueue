@@ -79,8 +79,8 @@
               {% if errors.get('email') %}<small class="field-error">{{ errors.email }}</small>{% endif %}
             </div>
             <div class="registration-field">
-              <label for="phone">Phone number <span>(include country code)</span></label>
-              <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="24" value="{{ form.get('phone', '') }}" placeholder="+1 206 555 0134" />
+              <label for="phone">Phone number <span>(India is the default country)</span></label>
+              <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="24" value="{{ form.get('phone', '') }}" placeholder="98765 43210 or +1 206 555 0134" />
               <small>Enter an email, a phone number, or both.</small>
               {% if errors.get('phone') %}<small class="field-error">{{ errors.phone }}</small>{% endif %}
               {% if errors.get('contact') %}<small class="field-error">{{ errors.contact }}</small>{% endif %}
@@ -90,6 +90,11 @@
               <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required placeholder="At least 10 characters" />
               <small>Use at least 10 characters.</small>
               {% if errors.get('password') %}<small class="field-error">{{ errors.password }}</small>{% endif %}
+            </div>
+            <div class="registration-field">
+              <label for="confirm-password">Confirm password</label>
+              <input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required />
+              {% if errors.get('confirm_password') %}<small class="field-error">{{ errors.confirm_password }}</small>{% endif %}
             </div>
             <div class="registration-field">
               <label id="photo-label" for="photo">Profile photo <span>(optional)</span></label>

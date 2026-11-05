@@ -47,6 +47,7 @@
     const count = document.querySelector("#result-count");
     let activeCategory = "All services";
     let favoritesOnly = false;
+    let targetProviderId = new URL(window.location.href).searchParams.get("providerId");
 
     function filterProviders() {
       const query = searchInput.value.trim().toLowerCase();
@@ -54,15 +55,16 @@
       let visible = 0;
       for (const card of cards) {
         const searchable = card.textContent.toLowerCase();
-        const matches = (favoritesOnly ? card.dataset.favorite === "true" : activeCategory === "All services" || card.dataset.category === activeCategory)
+        const matches = (!targetProviderId || card.dataset.providerId === targetProviderId)
+          && (favoritesOnly ? card.dataset.favorite === "true" : activeCategory === "All services" || card.dataset.category === activeCategory)
           && (!query || searchable.includes(query))
           && (!locationQuery || searchable.includes(locationQuery));
         card.hidden = !matches;
         if (matches) visible += 1;
       }
       count.textContent = visible;
-      emptyState.hidden = visible !== 0;
-      locationLabel.textContent = locationInput.value || "your location";
+      if (emptyState) emptyState.hidden = visible !== 0;
+      locationLabel.textContent = locationInput.value || "all locations";
     }
 
     searchInput.addEventListener("input", filterProviders);
@@ -74,6 +76,7 @@
     document.querySelector("#all-nearby").addEventListener("click", () => {
       activeCategory = "All services";
       favoritesOnly = false;
+      targetProviderId = null;
       chips.forEach((chip) => chip.classList.toggle("selected", chip.dataset.category === activeCategory));
       chips.forEach((chip) => chip.setAttribute("aria-pressed", String(chip.dataset.category === activeCategory)));
       filterProviders();
@@ -81,6 +84,7 @@
     chips.forEach((chip) => chip.addEventListener("click", () => {
       activeCategory = chip.dataset.category;
       favoritesOnly = activeCategory === "Favorites";
+      targetProviderId = null;
       chips.forEach((item) => item.classList.toggle("selected", item === chip));
       chips.forEach((item) => item.setAttribute("aria-pressed", String(item === chip)));
       filterProviders();
@@ -92,10 +96,12 @@
       searchInput.value = "";
       activeCategory = "All services";
       favoritesOnly = false;
+      targetProviderId = null;
       chips.forEach((chip) => chip.classList.toggle("selected", chip.dataset.category === activeCategory));
       chips.forEach((chip) => chip.setAttribute("aria-pressed", String(chip.dataset.category === activeCategory)));
       filterProviders();
     });
+    filterProviders();
 
     document.querySelectorAll(".join-queue").forEach((button) => button.addEventListener("click", async () => {
       try {
@@ -165,6 +171,122 @@
   const providerPage = document.querySelector(".dashboard-page[data-provider-id]");
   if (providerPage) {
     const providerId = providerPage.dataset.providerId;
+    const queueRows = document.querySelector("#queue-rows");
+    const queueCount = document.querySelector("#people-count");
+    const callNextButton = document.querySelector("#call-next");
+    const noWaiting = document.querySelector("#no-waiting");
+    const queueFilters = document.querySelectorAll("[data-queue-filter]");
+    const peopleMetric = document.querySelector("#provider-people-metric");
+    const waitMetric = document.querySelector("#provider-wait-metric");
+    const serviceDuration = Number(providerPage.dataset.serviceDuration) || 15;
+    const presentationButton = document.querySelector("#toggle-presentation");
+    const queueFilterHeading = document.querySelector(".queue-table-heading span:nth-child(2)");
+    let activeQueueFilter = "active";
+    presentationButton.addEventListener("click", () => {
+      const expanded = presentationButton.getAttribute("aria-expanded") !== "true";
+      providerPage.classList.toggle("presentation-expanded", expanded);
+      providerPage.closest(".app-shell").classList.toggle("presentation-active", expanded);
+      presentationButton.setAttribute("aria-expanded", String(expanded));
+      presentationButton.textContent = expanded ? "Collapse display" : "Expand display";
+    });
+
+    function appendText(parent, tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      element.textContent = text;
+      parent.append(element);
+      return element;
+    }
+
+    function renderQueue(queues, filter = activeQueueFilter) {
+      queueRows.replaceChildren();
+      const showingCompleted = filter === "completed";
+      const serving = queues.some((entry) => entry.status === "serving");
+      for (const [index, entry] of queues.entries()) {
+        const row = document.createElement("div");
+        row.className = "queue-table-row";
+        row.dataset.queueId = entry.id;
+        const customer = document.createElement("div");
+        customer.className = "customer-cell";
+        appendText(customer, "span", `customer-avatar avatar-${index % 5 + 1}`, (entry.customerName || "Customer").slice(0, 2).toUpperCase());
+        const customerText = document.createElement("span");
+        appendText(customerText, "strong", "", entry.customerName || "Customer");
+        const details = [entry.customerPhone, entry.customerEmail, entry.customerAddress, entry.customerService].filter(Boolean).join(" · ")
+          || (entry.status === "serving" ? "Service in progress" : "Customer");
+        appendText(customerText, "small", "customer-contact", details);
+        customer.append(customerText);
+        row.append(customer);
+        appendText(row, "span", "wait-cell", showingCompleted ? formatCompletedAt(entry.completedAt) : entry.status === "serving" ? "Now" : `~${entry.estimatedWait} min`);
+        const action = document.createElement("span");
+        action.className = "queue-row-action";
+        if (showingCompleted) {
+          appendText(action, "span", "table-status completed", "Completed");
+        } else if (entry.status === "serving") {
+          appendText(action, "span", "table-status next-up", "Serving");
+          const button = appendText(action, "button", "button button-complete queue-action", "Complete");
+          button.type = "button";
+          button.dataset.action = "complete";
+          button.dataset.queueId = entry.id;
+        } else {
+          appendText(action, "span", "table-status waiting", index === 0 ? "Next up" : "Waiting");
+          const button = appendText(action, "button", "button button-outline queue-action", "Start service");
+          button.type = "button";
+          button.dataset.action = "serve";
+          button.dataset.queueId = entry.id;
+          button.disabled = serving;
+        }
+        row.append(action);
+        queueRows.append(row);
+      }
+      noWaiting.textContent = showingCompleted ? "No completed services yet." : "No one waiting. Enjoy the breather.";
+      noWaiting.hidden = queues.length !== 0;
+      queueCount.textContent = queues.length;
+      const countLabel = queueCount.parentElement;
+      countLabel.replaceChildren(queueCount);
+      appendText(countLabel, "span", "", showingCompleted
+        ? ` completed service${queues.length === 1 ? "" : "s"}`
+        : ` customer${queues.length === 1 ? "" : "s"} in your queue`);
+      queueFilterHeading.textContent = showingCompleted ? "COMPLETED" : "WAIT";
+      callNextButton.hidden = showingCompleted;
+      if (!showingCompleted) {
+        peopleMetric.textContent = queues.length;
+        waitMetric.textContent = `${queues.length * serviceDuration} min`;
+        callNextButton.disabled = queues.length === 0 || serving;
+      }
+    }
+
+    function formatCompletedAt(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+    }
+
+    function selectQueueFilter(filter) {
+      activeQueueFilter = filter;
+      queueFilters.forEach((button) => {
+        const selected = button.dataset.queueFilter === filter;
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+    }
+
+    async function refreshProviderQueue() {
+      const filter = activeQueueFilter;
+      try {
+        const response = await api(`/api/providers/${encodeURIComponent(providerId)}/queues?status=${filter}`);
+        if (filter === activeQueueFilter) renderQueue(response.queues, filter);
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    queueFilters.forEach((button) => {
+      button.addEventListener("click", async () => {
+        selectQueueFilter(button.dataset.queueFilter);
+        await refreshProviderQueue();
+      });
+    });
+
     document.querySelector("#call-next").addEventListener("click", async () => {
       try {
         await api(`/api/providers/${encodeURIComponent(providerId)}/call-next`, { method: "POST" });
@@ -173,19 +295,47 @@
         showError(error.message);
       }
     });
-    document.querySelectorAll(".queue-action").forEach((button) => button.addEventListener("click", async () => {
+    queueRows.addEventListener("click", async (event) => {
+      const button = event.target.closest(".queue-action");
+      if (!button) return;
       button.disabled = true;
       try {
         await api(`/api/providers/${encodeURIComponent(providerId)}/queues/${encodeURIComponent(button.dataset.queueId)}`, {
           method: "PATCH",
           body: JSON.stringify({ action: button.dataset.action }),
         });
-        window.location.reload();
+        await refreshProviderQueue();
       } catch (error) {
         button.disabled = false;
         showError(error.message);
       }
-    }));
+    });
+    document.querySelector("#walk-in-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = new FormData(form);
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        await api(`/api/providers/${encodeURIComponent(providerId)}/walk-ins`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: values.get("name"),
+            email: values.get("email"),
+            phone: values.get("phone"),
+            address: values.get("address"),
+            service: values.get("service"),
+          }),
+        });
+        form.reset();
+        selectQueueFilter("active");
+        await refreshProviderQueue();
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        submit.disabled = false;
+      }
+    });
     document.querySelector("#toggle-open").addEventListener("click", async () => {
       const currentStatus = document.querySelector("#provider-status").textContent;
       try {
@@ -196,6 +346,27 @@
         window.location.reload();
       } catch (error) {
         showError(error.message);
+      }
+    });
+    document.querySelector("#provider-photo-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+        const response = await fetch(`/api/providers/${encodeURIComponent(providerId)}/photo`, {
+          method: "POST",
+          headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+          body: new FormData(form),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || `Request failed (${response.status}).`);
+        window.location.reload();
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        submit.disabled = false;
       }
     });
     document.querySelector("#provider-settings")?.addEventListener("submit", async (event) => {
@@ -209,6 +380,9 @@
             name: values.get("name"),
             category: values.get("category"),
             address: values.get("address"),
+            description: values.get("description"),
+            contactEmail: values.get("contactEmail"),
+            contactPhone: values.get("contactPhone"),
             services: values.get("services").split(",").map((service) => service.trim()).filter(Boolean),
             hours: values.get("hours"),
             serviceDuration: Number(values.get("serviceDuration")),
@@ -219,6 +393,7 @@
         showError(error.message);
       }
     });
+    window.setInterval(refreshProviderQueue, 10000);
   }
 
   const providerFields = document.querySelector("#provider-fields");
