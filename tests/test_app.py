@@ -2,6 +2,7 @@ from io import BytesIO
 import json
 import os
 import re
+import ssl
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from uuid import uuid4
 from PIL import Image
 
 from app import create_app
+from postgres_store import PostgresStore, _uuid
 from store import FileStore
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -44,6 +46,39 @@ class StoreTests(unittest.TestCase):
             self.store.put_config("../outside.json", {})
 
 
+class PostgresStoreTests(unittest.TestCase):
+    def test_postgres_backend_is_opt_in_and_legacy_ids_map_stably_to_uuids(self):
+        self.assertEqual(_uuid("legacy-provider-5"), _uuid("legacy-provider-5"))
+        self.assertNotEqual(_uuid("legacy-provider-5"), _uuid("legacy-provider-6"))
+        self.assertEqual(len(_uuid("legacy-provider-5")), 36)
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        self.assertEqual(store.dsn, "postgresql://user:password@localhost/smartqueue")
+        ssl_context = store._create_ssl_context("require", None)
+        self.assertTrue(ssl_context.check_hostname)
+        self.assertEqual(ssl_context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(
+            PostgresStore(
+                "postgresql://user:password@localhost/smartqueue",
+                ssl_root_cert="root-ca.pem",
+            ).ssl_root_cert
+        )
+        with self.assertRaises(ValueError):
+            store._create_ssl_context("disable", None)
+        with self.assertRaises(ValueError):
+            PostgresStore("file:///tmp/store")
+
+    def test_app_selects_postgres_only_when_database_url_is_configured(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app({
+                "TESTING": True,
+                "DATA_DIR": Path(temp_dir) / "store",
+                "SEED_DIR": ROOT / "data" / "seed" / "providers",
+                "DATABASE_URL": "postgresql://user:password@localhost/smartqueue",
+            })
+            self.assertTrue(app.config["POSTGRES_ENABLED"])
+            self.assertIsInstance(app.extensions["smartqueue_store"], PostgresStore)
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -51,6 +86,7 @@ class ApiTests(unittest.TestCase):
             "TESTING": True,
             "DATA_DIR": Path(self.temp_dir.name) / "store",
             "SEED_DIR": ROOT / "data" / "seed" / "providers",
+            "ADMIN_PASSWORD": "test-admin-password",
         })
         self.client = self.app.test_client()
         self.store = self.app.extensions["smartqueue_store"]
@@ -79,7 +115,13 @@ class ApiTests(unittest.TestCase):
             })
         response = self.client.post("/register", data=data)
         self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
-        return next(user for user in self.store.list("users") if user.get("email") == data["email"] or user.get("phone") == data["phone"])
+        user = next(user for user in self.store.list("users") if user.get("email") == data["email"] or user.get("phone") == data["phone"])
+        if role == "provider":
+            provider_id = str(user["providerId"])
+            provider = self.store.get("providers", provider_id)
+            provider["approvalStatus"] = "approved"
+            self.store.put("providers", provider_id, provider, provider)
+        return user
 
     def login_account(self, identifier, password="another-long-password"):
         page = self.client.get("/login")
@@ -92,6 +134,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
         with self.client.session_transaction() as browser_session:
             self.client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
+        return response
+
+    def login_admin(self, password="test-admin-password"):
+        page = self.client.get("/admin/login")
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', page.data).group(1).decode()
+        response = self.client.post("/admin/login", data={
+            "password": password,
+            "csrf_token": token,
+        })
+        expected_status = 303 if password == "test-admin-password" else 401
+        self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
+        if response.status_code == 303:
+            with self.client.session_transaction() as browser_session:
+                self.client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
         return response
 
     def test_seed_and_home_render(self):
@@ -115,12 +171,133 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="toggle-presentation"', provider.data)
         self.assertIn(b"Expand display", provider.data)
         self.assertIn(b"Join your queue", provider.data)
+        self.assertEqual(admin.status_code, 302)
+        self.login_admin()
+        admin = self.client.get("/?view=admin")
         self.assertEqual(admin.status_code, 200)
-        self.assertIn(b"Platform overview", admin.data)
+        self.assertIn(b"Provider approvals", admin.data)
         self.assertEqual(script.status_code, 200)
         self.assertEqual(styles.status_code, 200)
         script.close()
         styles.close()
+
+    def test_new_provider_requires_approval_to_appear_or_accept_queue_entries(self):
+        registration = self.client.post("/register", data={
+            "name": "Pending Provider Owner",
+            "email": "pending-owner@example.com",
+            "password": "another-long-password",
+            "confirm_password": "another-long-password",
+            "role": "provider",
+            "business_name": "Pending Sample Service",
+            "category": "Healthcare",
+            "address": "Mumbai, India",
+            "services": "Consultation",
+        })
+        self.assertEqual(registration.status_code, 303)
+        owner = next(user for user in self.store.list("users") if user.get("email") == "pending-owner@example.com")
+        provider_id = str(owner["providerId"])
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["approvalStatus"], "pending")
+
+        listing = self.client.get("/")
+        public_api = self.client.get("/api/providers")
+        self.assertNotIn(b"Pending Sample Service", listing.data)
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in json.loads(public_api.data)],
+        )
+        self.assertEqual(self.client.get(f"/providers/{provider_id}/qr.svg").status_code, 403)
+        self.assertEqual(self.client.get(f"/providers/{provider_id}/walk-in").status_code, 403)
+
+        self.create_account("customer", "approval-customer@example.com")
+        self.login_account("approval-customer@example.com")
+        not_approved = self.client.post("/api/queues", json={"providerId": provider_id})
+        self.assertEqual(not_approved.status_code, 403)
+
+        self.client.post("/logout")
+        self.assertEqual(self.client.get("/?view=admin").status_code, 302)
+        admin_login_page = self.client.get("/admin/login")
+        admin_csrf = re.search(rb'name="csrf_token" value="([^"]+)"', admin_login_page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = admin_csrf
+        self.assertEqual(
+            self.client.patch(f"/api/admin/providers/{provider_id}/approval", json={"action": "approve"}).status_code,
+            403,
+        )
+        self.login_admin(password="incorrect-admin-password")
+
+    def test_admin_can_approve_reject_and_provider_can_request_rereview(self):
+        provider_owner = self.create_account(
+            "provider",
+            "review-owner@example.com",
+        )
+        provider_id = str(provider_owner["providerId"])
+        provider = self.store.get("providers", provider_id)
+        provider["approvalStatus"] = "pending"
+        self.store.put("providers", provider_id, provider, provider)
+
+        self.assertEqual(self.client.get("/?view=admin").status_code, 302)
+        login_page = self.client.get("/admin/login")
+        self.assertEqual(login_page.status_code, 200)
+        bad_login_token = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = bad_login_token
+        self.assertEqual(self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "approve"},
+        ).status_code, 403)
+        self.assertIn(b"Administrator password", login_page.data)
+        bad_login = self.client.post("/admin/login", data={
+            "password": "wrong-admin-password",
+            "csrf_token": bad_login_token,
+        })
+        self.assertEqual(bad_login.status_code, 401)
+
+        self.login_admin()
+        dashboard = self.client.get("/?view=admin")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Jamie&#39;s Service", dashboard.data)
+        approved = self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "approve", "note": "Business details reviewed."},
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json["provider"]["approvalStatus"], "approved")
+        self.assertEqual(self.store.list("provider_reviews")[-1]["decision"], "approved")
+        self.assertIn(
+            provider_id,
+            [str(provider["id"]) for provider in self.client.get("/api/providers").json],
+        )
+
+        rejected = self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "reject", "note": "Please verify your business address."},
+        )
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(rejected.json["provider"]["approvalStatus"], "rejected")
+        self.assertEqual(rejected.json["provider"]["status"], "Paused")
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in self.client.get("/api/providers").json],
+        )
+
+        owner_client = self.app.test_client()
+        owner_login_page = owner_client.get("/login")
+        owner_csrf = re.search(rb'name="csrf_token" value="([^"]+)"', owner_login_page.data).group(1).decode()
+        owner_client.post("/login", data={
+            "identifier": "review-owner@example.com",
+            "password": "another-long-password",
+            "csrf_token": owner_csrf,
+        })
+        with owner_client.session_transaction() as browser_session:
+            owner_client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
+        provider_dashboard = owner_client.get("/?view=provider")
+        self.assertIn(b"Please verify your business address.", provider_dashboard.data)
+        resubmitted = owner_client.post(f"/api/providers/{provider_id}/request-review")
+        self.assertEqual(resubmitted.status_code, 200)
+        self.assertEqual(resubmitted.json["provider"]["approvalStatus"], "pending")
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in owner_client.get("/api/providers").json],
+        )
 
     def test_provider_qr_and_live_queue_are_owner_scoped(self):
         owner = self.create_account("provider", "owner@example.com")
@@ -230,6 +407,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(provider["people"], 0)
         self.assertEqual(provider["contactEmail"], "taylor@example.com")
         self.assertIsNone(provider["contactPhone"])
+        self.login_admin()
+        approval = self.client.patch(
+            f"/api/admin/providers/{provider['id']}/approval",
+            json={"action": "approve"},
+        )
+        self.assertEqual(approval.status_code, 200)
         public_provider = next(
             item for item in self.client.get("/api/providers").json
             if item["id"] == provider["id"]
@@ -262,7 +445,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(provider["name"], "Sample provider")
         self.assertEqual(provider["category"], "Healthcare")
         self.assertEqual(self.store.get("providers", str(provider["id"])), provider)
-        self.assertIn(provider, self.client.get("/api/providers").json)
+        self.assertNotIn(
+            provider["id"],
+            [item["id"] for item in self.client.get("/api/providers").json],
+        )
+
+        self.login_admin()
+        approval = self.client.patch(
+            f"/api/admin/providers/{provider['id']}/approval",
+            json={"action": "approve"},
+        )
+        self.assertEqual(approval.status_code, 200)
+        public_provider = next(
+            item for item in self.client.get("/api/providers").json
+            if str(item["id"]) == str(provider["id"])
+        )
+        self.assertEqual(public_provider["name"], "Sample provider")
+        self.assertEqual(public_provider["category"], "Healthcare")
 
         self.create_account("customer", "patient@example.com")
         self.login_account("patient@example.com")
@@ -390,6 +589,8 @@ class ApiTests(unittest.TestCase):
         user = self.store.list("users")[0]
         provider = self.store.get("providers", str(user["providerId"]))
         self.assertEqual(provider["photoId"], user["photoId"])
+        provider["approvalStatus"] = "approved"
+        self.store.put("providers", str(provider["id"]), provider, provider)
         photo = self.client.get(f"/media/providers/{provider['photoId']}")
         self.assertEqual(photo.status_code, 200)
         self.assertEqual(photo.mimetype, "image/jpeg")

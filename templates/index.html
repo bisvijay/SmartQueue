@@ -38,14 +38,14 @@
             {% if queue and view == 'customer' %}
             <a class="queue-shortcut" href="#my-queue"><span class="queue-dot"></span>My queue</a>
             {% endif %}
-            {% if current_user %}
+            {% if current_user or admin_authenticated %}
             <form action="{{ url_for('logout') }}" method="post" class="logout-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><button class="nav-link" type="submit">Sign out</button></form>
             {% else %}
             <a class="button button-dark signup-link" href="{{ url_for('register') }}">Sign up</a>
             <a class="nav-link login-link" href="{{ url_for('login') }}">Log in</a>
             {% endif %}
-            {% if not current_user %}
-            <button class="avatar-button" aria-label="Open admin dashboard" title="Demo admin dashboard" data-view="admin">JD</button>
+            {% if not admin_authenticated %}
+            <a class="avatar-button" aria-label="Administrator sign in" title="Administrator sign in" href="{{ url_for('admin_login') }}">AD</a>
             {% endif %}
           </div>
         </div>
@@ -219,9 +219,19 @@
           <div><p class="eyebrow">PROVIDER SPACE</p><h1>{{ current_user.name }} <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
           <div class="dashboard-presentation-controls">
             <button class="button button-outline" id="toggle-presentation" type="button" aria-expanded="false" aria-controls="provider-dashboard-content">Expand display</button>
-            <button class="button button-dark" id="toggle-open"><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
+            <button class="button button-dark" id="toggle-open" {% if provider.approvalStatus != 'approved' %}disabled title="Your listing must be approved first"{% endif %}><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
           </div>
         </div>
+        {% if provider.approvalStatus != 'approved' %}
+        <section class="approval-notice {% if provider.approvalStatus == 'rejected' %}approval-rejected{% endif %}" role="status">
+          <div>
+            <strong>Listing {{ provider.approvalStatus }}{% if provider.approvalStatus == 'pending' %} review{% endif %}</strong>
+            {% if provider.approvalStatus == 'pending' %}<p>Your listing is hidden from customers until an administrator approves it.</p>{% endif %}
+            {% if provider.approvalStatus == 'rejected' %}<p>{{ provider.approvalNote or 'Update your listing details, then request another review.' }}</p>{% endif %}
+          </div>
+          {% if provider.approvalStatus == 'rejected' %}<button class="button button-outline" id="request-provider-review" type="button">Request another review</button>{% endif %}
+        </section>
+        {% endif %}
         <div id="provider-dashboard-content" class="provider-dashboard-content">
         <div class="metric-grid">
           {{ metric('People in queue', provider.people, 'Waiting or in service', '♙', 'provider-people-metric') }}
@@ -259,8 +269,12 @@
           </section>
           <section class="dashboard-card provider-qr-card">
             <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
+            {% if provider.approvalStatus == 'approved' %}
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
             <p>Scan to find this listing and join the queue.</p>
+            {% else %}
+            <p>Your listing QR code will be available after approval.</p>
+            {% endif %}
           </section>
           <section class="dashboard-card provider-profile-card">
             <div class="dashboard-card-heading"><div><p class="eyebrow">YOUR PLACE</p><h2>Business settings</h2></div></div>
@@ -293,6 +307,7 @@
           </section>
           <section class="dashboard-card walk-in-card">
             <div class="dashboard-card-heading"><div><p class="eyebrow">IN PERSON</p><h2>Add walk-in</h2></div></div>
+            {% if provider.approvalStatus == 'approved' %}
             <form class="provider-settings-form" id="walk-in-form">
               <label>Customer name<input name="name" maxlength="100" autocomplete="name" required /></label>
               <label>Email address <small>Enter an email, a phone, or both</small><input name="email" type="email" maxlength="254" autocomplete="email" /></label>
@@ -308,6 +323,9 @@
               <button class="button button-dark full-width" type="submit">Add to queue</button>
             </form>
             <p class="inline-notice" id="walk-in-notice" role="status" hidden></p>
+            {% else %}
+            <p>Walk-ins can be added after your listing is approved.</p>
+            {% endif %}
           </section>
         </div>
         <div class="dashboard-disclaimer">Queue and business settings are saved to this server’s local data store.</div>
@@ -318,28 +336,45 @@
       {% endif %}
 
       {% else %}
-      <main class="dashboard-page">
-        <div class="dashboard-top"><div><p class="eyebrow">SMARTQUEUE · ADMIN</p><h1>Platform overview <span>✳</span></h1><p class="dashboard-subtitle">A quick look at what’s happening across the neighborhood.</p></div><span class="demo-admin-badge">Demo admin view</span></div>
+      <main class="dashboard-page admin-approval-dashboard" data-admin-dashboard>
+        <div class="dashboard-top"><div><p class="eyebrow">SMARTQUEUE · ADMIN</p><h1>Provider approvals <span>✳</span></h1><p class="dashboard-subtitle">Review provider listings before they appear in customer discovery.</p></div><span class="demo-admin-badge">Private admin area</span></div>
         <div class="metric-grid">
-          {{ metric('Service providers', providers|length, 'Sample records', '⌂') }}
-          {{ metric('Customers today', '—', 'No account data', '♙') }}
-          {{ metric('Active queues', providers|sum(attribute='people'), 'Across all categories', '◷') }}
-          {% set waits = providers|map(attribute='wait')|list %}
+          {% set pending_providers = admin_providers|selectattr('approvalStatus', 'equalto', 'pending')|list %}
+          {% set approved_providers = admin_providers|selectattr('approvalStatus', 'equalto', 'approved')|list %}
+          {{ metric('Pending review', pending_providers|length, 'Awaiting your decision', '⌕') }}
+          {{ metric('Approved providers', approved_providers|length, 'Visible in discovery', '⌂') }}
+          {{ metric('Total providers', admin_providers|length, 'All listings', '♙') }}
+          {% set waits = admin_providers|map(attribute='wait')|list %}
           {% set avg_wait = ((waits|sum / (waits|length or 1))|round|int) %}
-          {{ metric('Avg. wait time', avg_wait|string + ' min', 'Sample estimate', '↘') }}
+          {{ metric('Avg. wait time', avg_wait|string + ' min', 'Across approved providers', '↘') }}
         </div>
         <section class="dashboard-card admin-provider-list">
-          <div class="dashboard-card-heading"><div><p class="eyebrow">PLATFORM HEALTH</p><h2>Service providers</h2></div><span class="demo-admin-badge">Sample records</span></div>
-          <div class="admin-table-heading"><span>PROVIDER</span><span>CATEGORY</span><span>WAITING</span><span>STATUS</span></div>
-          {% for provider in providers %}
-          <div class="admin-table-row">
-            <div class="customer-cell"><span class="admin-provider-icon {{ provider.accent }}">{{ provider.icon }}</span><strong>{{ provider.name }}</strong></div>
-            <span>{{ provider.category }}</span><span>{{ provider.people }} people · ~{{ provider.wait }} min</span>
-            <span class="table-status {% if provider.status == 'Open' %}next-up{% else %}waiting{% endif %}">{{ provider.status }}</span>
-          </div>
+          <div class="dashboard-card-heading"><div><p class="eyebrow">MODERATION QUEUE</p><h2>Provider listings</h2></div></div>
+          {% if admin_providers %}
+          {% for provider in admin_providers %}
+          <article class="admin-approval-row" data-admin-provider-id="{{ provider.id }}">
+            <div class="admin-approval-details">
+              <div class="customer-cell"><span class="admin-provider-icon {{ provider.accent }}">{{ provider.icon }}</span><span><strong>{{ provider.name }}</strong><small>{{ provider.category }} · {{ provider.address }}</small></span></div>
+              <p>{{ provider.description or 'No tagline provided.' }}</p>
+              <p>{{ provider.contactEmail or 'No business email' }}{% if provider.contactPhone %} · {{ provider.contactPhone }}{% endif %}</p>
+              <p>Services: {{ provider.services|join(', ') if provider.services else 'None listed' }} · Hours: {{ provider.hours }}</p>
+              {% if provider.approvalNote %}<p class="approval-note">Review note: {{ provider.approvalNote }}</p>{% endif %}
+            </div>
+            <div class="admin-approval-actions">
+              <span class="table-status {% if provider.approvalStatus == 'approved' %}next-up{% elif provider.approvalStatus == 'rejected' %}rejected{% else %}waiting{% endif %}">{{ provider.approvalStatus|title }}</span>
+              <label>Review note <textarea data-review-note maxlength="500" rows="2" placeholder="Optional reason or guidance"></textarea></label>
+              <div>
+                <button class="button button-dark admin-approval-action" type="button" data-action="approve" {% if provider.approvalStatus == 'approved' %}disabled{% endif %}>Approve</button>
+                <button class="button button-outline admin-approval-action" type="button" data-action="reject" {% if provider.approvalStatus == 'rejected' %}disabled{% endif %}>Reject</button>
+              </div>
+            </div>
+          </article>
           {% endfor %}
+          {% else %}
+          <p>No provider listings to review.</p>
+          {% endif %}
         </section>
-        <div class="dashboard-disclaimer">Admin metrics and provider records are illustrative demo data. No user or provider accounts are connected.</div>
+        <p class="inline-notice" id="admin-approval-notice" role="status" hidden></p>
       </main>
       {% endif %}
     </div>

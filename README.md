@@ -51,7 +51,7 @@ Important relationships: one account may own one provider listing; a provider ha
 
 ### PostgreSQL schema
 
-This is a baseline DDL sketch for migrations. Production migrations should also establish database roles, permissions, indexes appropriate to observed query load, and a retention/deletion policy.
+This is the baseline schema to create in a new Supabase project. Afterward, apply the repository compatibility migration at `migrations/001_postgres_app_compat.sql`; it adds fields used by the Flask app, the provider review table, permits account roles `admin` and `supervisor`, and allows ownerless fictional seed listings to be imported. Production deployment still needs a reviewed access-control and retention policy.
 
 ```sql
 CREATE TABLE media_assets (
@@ -250,6 +250,57 @@ ALTER TABLE media_assets
 
 In an actual migration, create `accounts`, `providers`, and `media_assets` first without their circular foreign keys, then add the foreign keys after all referenced tables exist.
 
+### Connect this Flask app to Supabase
+
+The app can use PostgreSQL when `SMARTQUEUE_DATABASE_URL` is set; without it, the app continues to use the local JSON store. The database driver is installed from `requirements.txt`.
+
+1. In Supabase, open the project and select **Connect → Direct Connection string**. Choose the **Session pooler** if your network cannot reach the direct endpoint. Copy the URI and replace its password placeholder locally. Do not send the URI, password, or API keys in chat or commit them to Git. If the database password contains reserved URI characters, URL-encode them.
+2. Stop the Flask app. In the repository root, set the connection URI in the same PowerShell window you will use for the following commands:
+
+   ```powershell
+   $env:SMARTQUEUE_DATABASE_URL = "postgresql://postgres...:YOUR_ENCODED_PASSWORD@.../postgres"
+   ```
+
+   If TLS reports a certificate verification error, download the **server root certificate** from **Supabase → Database Settings → SSL Configuration → Download Certificate**. Save the PEM file locally and set its path in that same shell:
+
+   ```powershell
+   $env:SMARTQUEUE_DB_SSL_ROOT_CERT = "C:\secure\supabase-root.crt"
+   ```
+
+   This keeps TLS certificate and hostname verification enabled. Do not disable SSL verification to work around certificate errors.
+
+3. Install the updated Python requirements:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+
+4. Apply the compatibility migration. It is safe to rerun and does not import or delete records:
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\prepare_postgres.py
+   ```
+
+5. Before switching the app, import local JSON data into an **empty** target project. The importer refuses non-empty app tables rather than merging or overwriting data. It leaves local source files unchanged:
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\prepare_postgres.py --import-json
+   ```
+
+   Review its record counts. Provider/customer image files remain in the local data directory for now; image-object migration to Supabase Storage is a separate step.
+
+6. Start the app from that same PowerShell window so it inherits the connection setting:
+
+   ```powershell
+   .\.venv\Scripts\python.exe app.py
+   ```
+
+7. Verify sign-in, provider discovery, queue joins, provider queue actions, and approval decisions in the app. In Supabase **Table Editor**, verify imported row counts for `accounts`, `providers`, `provider_services`, `provider_favorites`, `queue_visits`, and `provider_reviews`. Keep a protected backup of the local JSON data until the migration is verified.
+
+The importer maps the existing JSON IDs to UUIDs and updates their references. The app persists core account, provider, service, favorite, queue, and review data in the matching relational tables; extra app fields are retained in `app_data` JSONB columns during this compatibility stage. It does not configure Supabase Auth or expose the database to browser code. Flask continues to handle sign-in, and the admin approval view still uses `SMARTQUEUE_ADMIN_PASSWORD`; database-backed admin-account provisioning is not implemented yet.
+
+For current migration status, exact setup commands, known limitations, and the handoff for a future maintainer, see [`docs/SUPABASE_MIGRATION_HANDOFF.md`](docs/SUPABASE_MIGRATION_HANDOFF.md).
+
 ### Write and read flows
 
 1. **Register:** validate and normalize email/phone, hash the password, create an account, and—if the role is provider—create its business listing and initial services in one transaction.
@@ -271,9 +322,7 @@ Store image bytes in an object-storage service such as **Supabase Storage**; Pos
 
 ### Low-cost rollout and migration
 
-For a low-volume pilot, begin on Supabase Free in Mumbai, with alerts/usage checks, scheduled database exports to a separate location, and a tested restore procedure. Upgrade or move to a paid managed plan before depending on it for continuous operation or backups; the free tier can pause after inactivity. Keep Flask and Postgres in nearby regions to reduce round-trip latency.
-
-Migration should be incremental: add SQLAlchemy models and Alembic migrations; import users, providers, favorites, and queue records from the JSON store; verify row counts and login/queue workflows; switch the store adapter to Postgres; then retain a final JSON export as a rollback archive. Add object storage for images in a separate step, first migrating provider photos and verifying public rendering, then customer photos with private access. The current local JSON store remains the active implementation until that migration is explicitly built and configured.
+For a low-volume pilot, monitor usage, arrange database exports to a separate location, and test restore procedures. Upgrade or move to a paid managed plan before depending on it for continuous operation or backups; free-tier availability and limits can change. Keep Flask and Postgres in nearby regions. Move image bytes to Supabase Storage in a separate step, first migrating provider photos and verifying public rendering, then customer photos with private access.
 
 ## Registration
 
@@ -285,7 +334,7 @@ Contact details are not verified. A random session signing key is generated at a
 
 ## Demo views
 
-The customer view is the default, with fictional seed listings for preview. Sign in with a provider account to manage its listing and queue; the admin button remains an illustrative, unauthenticated demo view. Queue actions and provider settings persist in the local JSON store.
+The customer view is the default, with fictional seed listings for preview. Newly registered providers are pending review and do not appear in customer discovery or accept queue entries until an administrator approves them. Configure `SMARTQUEUE_ADMIN_PASSWORD` in the app environment and restart the app to enable the **Admin** sign-in link; this separate password protects the provider approval dashboard. Review each pending listing before approving or rejecting it. Rejected providers can correct their details and request another review. Existing listings without an approval status remain approved for backward compatibility. Queue actions, approval decisions, and provider settings persist in the local JSON store.
 
 ## Example scenarios
 

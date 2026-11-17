@@ -16,6 +16,7 @@ from qrcode.image.svg import SvgPathImage
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from postgres_store import PostgresStore
 from store import FileStore
 
 
@@ -49,13 +50,23 @@ def create_app(test_config=None):
         SEED_DIR=ROOT / "data" / "seed" / "providers",
         MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 64 * 1024,
         SECRET_KEY=os.environ.get("SMARTQUEUE_SECRET_KEY") or secrets.token_hex(32),
+        ADMIN_PASSWORD=os.environ.get("SMARTQUEUE_ADMIN_PASSWORD", ""),
+        DATABASE_URL=os.environ.get("SMARTQUEUE_DATABASE_URL", ""),
+        DATABASE_SSL_ROOT_CERT=os.environ.get("SMARTQUEUE_DB_SSL_ROOT_CERT", ""),
     )
     if test_config:
         app.config.update(test_config)
-    store = FileStore(app.config["DATA_DIR"])
+    store = (
+        PostgresStore(app.config["DATABASE_URL"], app.config["DATABASE_SSL_ROOT_CERT"])
+        if app.config["DATABASE_URL"]
+        else FileStore(app.config["DATA_DIR"])
+    )
+    app.config["POSTGRES_ENABLED"] = isinstance(store, PostgresStore)
     app.extensions["smartqueue_store"] = store
 
     def seed_providers():
+        if app.config["POSTGRES_ENABLED"]:
+            return
         if store.list("providers"):
             return
         for seed_file in sorted(Path(app.config["SEED_DIR"]).glob("*.json")):
@@ -84,6 +95,19 @@ def create_app(test_config=None):
         if role and user.get("role") != role:
             raise ApiError(403, f"A {role} account is required.")
         return user
+
+    def require_admin():
+        if not app.config["ADMIN_PASSWORD"] or session.get("admin_authenticated") is not True:
+            raise ApiError(403, "Administrator access is required.")
+
+    def provider_approval_status(provider):
+        # Existing listings predate moderation and remain visible; newly registered
+        # providers are explicitly marked pending.
+        return provider.get("approvalStatus", "approved")
+
+    def ensure_provider_approved(provider):
+        if provider_approval_status(provider) != "approved":
+            raise ApiError(403, "This provider is not approved to accept queue entries.")
 
     def require_owned_provider(provider_id):
         user = require_user("provider")
@@ -147,6 +171,9 @@ def create_app(test_config=None):
             raise ApiError(400, "Request body must be an object.")
         if set(body) - {"name", "email", "phone", "address", "service"}:
             raise ApiError(400, "Only walk-in customer details can be submitted.")
+        store.lock_providers([provider["id"]])
+        provider = require_provider(str(provider["id"]))
+        ensure_provider_approved(provider)
         if provider.get("status") != "Open":
             raise ApiError(409, "This provider is not accepting customers right now.")
 
@@ -271,7 +298,11 @@ def create_app(test_config=None):
 
     @app.context_processor
     def inject_template_state():
-        return {"current_user": current_user(), "csrf_token": csrf_token}
+        return {
+            "current_user": current_user(),
+            "csrf_token": csrf_token,
+            "admin_authenticated": bool(app.config["ADMIN_PASSWORD"] and session.get("admin_authenticated") is True),
+        }
 
     def render_registration(form=None, errors=None, created=False, status=200, photo_staged=False):
         return (
@@ -368,7 +399,11 @@ def create_app(test_config=None):
 
     @app.get("/")
     def home():
-        providers = [provider_with_contact(provider) for provider in store.list("providers")]
+        all_providers = [provider_with_contact(provider) for provider in store.list("providers")]
+        providers = [
+            provider for provider in all_providers
+            if provider_approval_status(provider) == "approved"
+        ]
         queue = None
         user = current_user()
         if user and user.get("role") == "customer":
@@ -394,6 +429,11 @@ def create_app(test_config=None):
             queue = {**queue, "wait": customer_wait}
         if view not in {"customer", "provider", "admin"}:
             view = "customer"
+        if view == "admin":
+            if not app.config["ADMIN_PASSWORD"]:
+                return render_template("admin_login.html", error="Admin access is not configured. Set SMARTQUEUE_ADMIN_PASSWORD and restart the app."), 503
+            if session.get("admin_authenticated") is not True:
+                return redirect(url_for("admin_login"))
         provider = None
         provider_queue = []
         if view == "provider":
@@ -408,9 +448,13 @@ def create_app(test_config=None):
                 session.clear()
                 return redirect(url_for("login"))
             provider = provider_with_contact(provider)
+            provider["approvalStatus"] = provider_approval_status(provider)
             provider_queue = provider_queue_view(provider)
             service_in_progress = any(entry.get("status") == "serving" for entry in provider_queue)
             provider = refresh_provider_metrics(provider)
+        if view == "admin":
+            for item in all_providers:
+                item["approvalStatus"] = provider_approval_status(item)
         return render_template(
             "index.html",
             providers=providers,
@@ -419,6 +463,7 @@ def create_app(test_config=None):
             provider=provider,
             provider_queue=provider_queue,
             service_in_progress=service_in_progress if view == "provider" else False,
+            admin_providers=all_providers if view == "admin" else [],
             provider_categories=PROVIDER_CATEGORIES,
             customer_position=customer_position,
             customer_wait=customer_wait,
@@ -511,6 +556,23 @@ def create_app(test_config=None):
     def logout():
         session.clear()
         return redirect(url_for("home"), code=303)
+
+    @app.route("/admin/login", methods=["GET", "POST"])
+    def admin_login():
+        if not app.config["ADMIN_PASSWORD"]:
+            return render_template(
+                "admin_login.html",
+                error="Admin access is not configured. Set SMARTQUEUE_ADMIN_PASSWORD and restart the app.",
+            ), 503
+        if request.method == "GET":
+            return render_template("admin_login.html", error=None)
+        supplied = request.form.get("password", "")
+        if not secrets.compare_digest(supplied, app.config["ADMIN_PASSWORD"]):
+            return render_template("admin_login.html", error="Administrator password is incorrect."), 401
+        session.clear()
+        session["admin_authenticated"] = True
+        session["csrf_token"] = secrets.token_urlsafe(32)
+        return redirect(url_for("home", view="admin"), code=303)
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
@@ -606,7 +668,11 @@ def create_app(test_config=None):
 
             if form["role"] == "provider":
                 providers = store.list("providers")
-                provider_id = str(max((int(item["id"]) for item in providers), default=0) + 1)
+                provider_id = (
+                    str(uuid.uuid4())
+                    if app.config["POSTGRES_ENABLED"]
+                    else str(max((int(item["id"]) for item in providers), default=0) + 1)
+                )
                 accent, icon = PROVIDER_CATEGORIES[form["category"]]
                 provider = {
                     "id": int(provider_id),
@@ -628,6 +694,8 @@ def create_app(test_config=None):
                     "services": services,
                     "contactEmail": form["email"] or None,
                     "contactPhone": normalized_phone_value or None,
+                    "approvalStatus": "pending",
+                    "approvalNote": "",
                 }
                 if photo_id:
                     provider["photoId"] = photo_id
@@ -681,11 +749,16 @@ def create_app(test_config=None):
 
     @app.get("/api/providers")
     def list_providers():
-        return jsonify([provider_with_contact(provider) for provider in store.list("providers")])
+        return jsonify([
+            provider_with_contact(provider)
+            for provider in store.list("providers")
+            if provider_approval_status(provider) == "approved"
+        ])
 
     @app.get("/providers/<provider_id>/qr.svg")
     def provider_qr(provider_id):
         provider = require_provider(provider_id)
+        ensure_provider_approved(provider)
         target_url = url_for("public_walk_in", provider_id=provider["id"], _external=True)
         qr = qrcode.QRCode(box_size=8, border=2)
         qr.add_data(target_url)
@@ -702,6 +775,7 @@ def create_app(test_config=None):
     @app.route("/providers/<provider_id>/walk-in", methods=["GET", "POST"])
     def public_walk_in(provider_id):
         provider = require_provider(provider_id)
+        ensure_provider_approved(provider)
         if request.method == "GET":
             return render_template(
                 "walk_in.html",
@@ -781,7 +855,23 @@ def create_app(test_config=None):
         provider_id = str(provider_id)
 
         with store.transaction():
+            store.lock_accounts([user["id"]])
+            queues = store.list("queues")
+            existing = next(
+                (
+                    entry
+                    for entry in queues
+                    if entry.get("customerId") == user["id"]
+                    and entry.get("status") in {"waiting", "serving"}
+                ),
+                None,
+            )
+            provider_ids = [provider_id]
+            if existing:
+                provider_ids.append(str(existing["providerId"]))
+            store.lock_providers(provider_ids)
             provider = require_provider(provider_id)
+            ensure_provider_approved(provider)
             if provider.get("status") != "Open":
                 raise ApiError(409, "This provider is not accepting customers right now.")
             queues = store.list("queues")
@@ -815,7 +905,8 @@ def create_app(test_config=None):
                 "status": "waiting",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
-            store.create("queues", queue["id"], queue, queue)
+            if not store.create("queues", queue["id"], queue, queue):
+                raise ApiError(409, "Your queue changed while joining. Refresh and try again.")
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers")), 201
@@ -826,6 +917,15 @@ def create_app(test_config=None):
         if not CLIENT_ID.fullmatch(queue_id):
             raise ApiError(400, "A valid queue ID is required.")
         with store.transaction():
+            store.lock_accounts([user["id"]])
+            queue = store.get("queues", queue_id)
+            if (
+                not queue
+                or queue.get("customerId") != user["id"]
+                or queue.get("status") != "waiting"
+            ):
+                raise ApiError(404, "Active queue entry not found.")
+            store.lock_providers([queue["providerId"]])
             queue = store.get("queues", queue_id)
             if (
                 not queue
@@ -842,7 +942,9 @@ def create_app(test_config=None):
     @app.post("/api/providers/<provider_id>/call-next")
     def call_next(provider_id):
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
+            ensure_provider_approved(provider)
             if any(queue.get("status") == "serving" for queue in active_provider_queues(provider_id)):
                 raise ApiError(409, "Complete the current service before starting another.")
             waiting = [entry for entry in active_provider_queues(provider_id) if entry.get("status") == "waiting"]
@@ -866,6 +968,58 @@ def create_app(test_config=None):
             entry = create_walk_in_entry(provider, body)
             return jsonify(queue=entry, providers=store.list("providers")), 201
 
+    @app.patch("/api/admin/providers/<provider_id>/approval")
+    def update_provider_approval(provider_id):
+        require_admin()
+        body = request.get_json(silent=True)
+        if (
+            not isinstance(body, dict)
+            or body.get("action") not in {"approve", "reject"}
+            or set(body) - {"action", "note"}
+        ):
+            raise ApiError(400, "Choose approve or reject and provide an optional review note.")
+        note = body.get("note", "")
+        if not isinstance(note, str) or len(note.strip()) > 500:
+            raise ApiError(400, "Review notes must be 500 characters or fewer.")
+        with store.transaction():
+            store.lock_providers([provider_id])
+            provider = require_provider(provider_id)
+            provider["approvalStatus"] = "approved" if body["action"] == "approve" else "rejected"
+            provider["approvalNote"] = note.strip()
+            provider["approvalUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+            if body["action"] == "reject":
+                provider["status"] = "Paused"
+            store.put("providers", str(provider["id"]), provider, provider)
+            event = {
+                "id": str(uuid.uuid4()),
+                "providerId": provider["id"],
+                "decision": provider["approvalStatus"],
+                "note": provider["approvalNote"],
+                "createdAt": provider["approvalUpdatedAt"],
+            }
+            store.create("provider_reviews", event["id"], event, event)
+            return jsonify(provider=provider)
+
+    @app.post("/api/providers/<provider_id>/request-review")
+    def request_provider_review(provider_id):
+        with store.transaction():
+            store.lock_providers([provider_id])
+            _, provider = require_owned_provider(provider_id)
+            if provider_approval_status(provider) != "rejected":
+                raise ApiError(409, "Only rejected provider listings can request another review.")
+            provider["approvalStatus"] = "pending"
+            provider["approvalUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+            store.put("providers", str(provider["id"]), provider, provider)
+            event = {
+                "id": str(uuid.uuid4()),
+                "providerId": provider["id"],
+                "decision": "resubmitted",
+                "note": provider.get("approvalNote", ""),
+                "createdAt": provider["approvalUpdatedAt"],
+            }
+            store.create("provider_reviews", event["id"], event, event)
+            return jsonify(provider=provider)
+
     @app.post("/api/providers/<provider_id>/photo")
     def update_provider_photo(provider_id):
         image_contents, image_error = process_photo(request.files.get("photo"))
@@ -874,6 +1028,7 @@ def create_app(test_config=None):
         if not image_contents:
             raise ApiError(400, "Choose a JPEG, PNG, or WebP listing photo.")
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             photo_id = f"{uuid.uuid4().hex}.jpg"
             photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
@@ -904,10 +1059,13 @@ def create_app(test_config=None):
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             if "status" in body:
                 if not isinstance(body["status"], str) or body["status"] not in {"Open", "Paused"}:
                     raise ApiError(400, "Status must be Open or Paused.")
+                if body["status"] == "Open":
+                    ensure_provider_approved(provider)
                 provider["status"] = body["status"]
             for key, limit in (("name", 120), ("address", 200), ("hours", 100)):
                 if key in body:
@@ -971,11 +1129,13 @@ def create_app(test_config=None):
         if not CLIENT_ID.fullmatch(queue_id):
             raise ApiError(400, "A valid queue ID is required.")
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             queue = store.get("queues", queue_id)
             if not queue or str(queue.get("providerId")) != provider_id:
                 raise ApiError(404, "Queue entry not found.")
             if body["action"] == "serve":
+                ensure_provider_approved(provider)
                 if queue.get("status") != "waiting":
                     raise ApiError(409, "Only waiting customers can be started.")
                 if any(entry.get("status") == "serving" for entry in active_provider_queues(provider_id)):

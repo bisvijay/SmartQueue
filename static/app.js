@@ -310,7 +310,7 @@
         showError(error.message);
       }
     });
-    document.querySelector("#walk-in-form").addEventListener("submit", async (event) => {
+    document.querySelector("#walk-in-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const values = new FormData(form);
@@ -395,6 +395,42 @@
     });
     window.setInterval(refreshProviderQueue, 10000);
   }
+
+  const adminDashboard = document.querySelector("[data-admin-dashboard]");
+  if (adminDashboard) {
+    adminDashboard.addEventListener("click", async (event) => {
+      const approvalButton = event.target.closest(".admin-approval-action");
+      if (approvalButton) {
+        const row = approvalButton.closest("[data-admin-provider-id]");
+        const note = row.querySelector("[data-review-note]").value;
+        approvalButton.disabled = true;
+        try {
+          await api(`/api/admin/providers/${encodeURIComponent(row.dataset.adminProviderId)}/approval`, {
+            method: "PATCH",
+            body: JSON.stringify({ action: approvalButton.dataset.action, note }),
+          });
+          window.location.reload();
+        } catch (error) {
+          approvalButton.disabled = false;
+          showError(error.message);
+        }
+      }
+    });
+  }
+
+  document.querySelector("#request-provider-review")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const providerId = document.querySelector(".dashboard-page[data-provider-id]")?.dataset.providerId;
+    if (!providerId) return;
+    button.disabled = true;
+    try {
+      await api(`/api/providers/${encodeURIComponent(providerId)}/request-review`, { method: "POST" });
+      window.location.reload();
+    } catch (error) {
+      button.disabled = false;
+      showError(error.message);
+    }
+  });
 
   const providerFields = document.querySelector("#provider-fields");
   if (providerFields) {
