@@ -4,10 +4,12 @@ import os
 import re
 import ssl
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from uuid import uuid4
 
+import pg8000.dbapi
 from PIL import Image
 
 from app import create_app
@@ -46,6 +48,67 @@ class StoreTests(unittest.TestCase):
             self.store.put_config("../outside.json", {})
 
 
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakeConnection:
+    """Stand-in for _Connection that counts opens without a live database."""
+
+    PROVIDER_ROW = {
+        "app_data": {},
+        "id": "11111111-1111-1111-1111-111111111111",
+        "owner_account_id": None,
+        "name": "Test Salon",
+        "category": "Salon",
+        "tagline": "Test",
+        "address": "1 Test Street",
+        "status": "open",
+        "public_email": "",
+        "public_phone_e164": "",
+        "approval_status": "approved",
+        "approval_note": "",
+        "approval_updated_at": None,
+    }
+
+    def __init__(self, fail_on=None):
+        self.raw = type("Raw", (), {"_usock": object()})()
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self.fail_on = fail_on
+        self.executed = []
+
+    def execute(self, query, params=None):
+        self.executed.append(query)
+        if self.fail_on and self.fail_on in query:
+            raise pg8000.dbapi.InterfaceError("connection is closed")
+        if query.strip().upper().startswith("SELECT 1"):
+            return _FakeResult([{"?column?": 1}])
+        if "FROM provider_services" in query:
+            return _FakeResult([])
+        if "FROM providers" in query:
+            return _FakeResult([dict(self.PROVIDER_ROW)])
+        return _FakeResult([])
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+        self.raw._usock = None
+
+
 class PostgresStoreTests(unittest.TestCase):
     def test_postgres_backend_is_opt_in_and_legacy_ids_map_stably_to_uuids(self):
         self.assertEqual(_uuid("legacy-provider-5"), _uuid("legacy-provider-5"))
@@ -66,6 +129,74 @@ class PostgresStoreTests(unittest.TestCase):
             store._create_ssl_context("disable", None)
         with self.assertRaises(ValueError):
             PostgresStore("file:///tmp/store")
+
+    def test_postgres_store_reuses_one_connection_across_operations(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(
+            store.get("providers", "11111111-1111-1111-1111-111111111111")["name"],
+            "Test Salon",
+        )
+        with store.transaction():
+            self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 1)
+        self.assertFalse(opened[0].closed)
+        self.assertGreaterEqual(opened[0].commits, 3)
+        store.close()
+        self.assertTrue(opened[0].closed)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+
+    def test_postgres_store_replaces_a_closed_connection(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        opened[0].raw._usock = None
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+        self.assertTrue(opened[0].closed)
+
+    def test_postgres_store_discards_broken_connection_and_probes_after_idle(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        # Simulate the pooler closing an idle connection: the next
+        # operation must probe, replace it, and succeed.
+        store._local.persistent_last_used = time.monotonic() - 3600
+        opened[0].fail_on = "SELECT 1"
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+        # A failure mid-operation discards the broken connection so the
+        # following operation reconnects instead of reusing a dead socket.
+        opened[1].fail_on = "FROM providers"
+        with self.assertRaises(pg8000.dbapi.InterfaceError):
+            store.list("providers")
+        self.assertTrue(opened[1].closed)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 3)
 
     def test_app_selects_postgres_only_when_database_url_is_configured(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,6 +1,7 @@
 import json
 import ssl
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -65,7 +66,21 @@ def _timestamp(value):
 
 
 class PostgresStore:
-    """PostgreSQL adapter for the app's existing record-store interface."""
+    """PostgreSQL adapter for the app's existing record-store interface.
+
+    Connections are reused per thread instead of opened fresh for every
+    operation. Against a remote database (e.g. the app in the US talking to
+    Supabase in ap-south-1) each new connection costs a TCP + TLS + login
+    handshake of several round trips, so listing N providers used to cost
+    N+1 handshakes. One persistent connection per thread turns that into
+    one handshake, plus a cheap liveness probe if the connection has sat
+    idle long enough that the pooler may have closed it.
+    """
+
+    # Probe a cached connection that has been idle longer than this, so a
+    # connection the pooler closed while idle is replaced before use
+    # instead of failing the first request after the idle period.
+    _IDLE_PROBE_SECONDS = 30.0
 
     def __init__(self, dsn, ssl_root_cert=None):
         if not isinstance(dsn, str) or not dsn.startswith(("postgres://", "postgresql://")):
@@ -73,12 +88,21 @@ class PostgresStore:
         self.dsn = dsn
         self.ssl_root_cert = ssl_root_cert
         self._local = threading.local()
+        self._ssl_contexts = {}
 
     @staticmethod
     def _create_ssl_context(sslmode, ssl_root_cert):
         if sslmode in {"disable", "allow"}:
             raise ValueError("PostgreSQL SSL must remain enabled for SmartQueue connections.")
         return ssl.create_default_context(cafile=ssl_root_cert or None)
+
+    def _get_ssl_context(self, sslmode):
+        key = (sslmode, self.ssl_root_cert)
+        ssl_context = self._ssl_contexts.get(key)
+        if ssl_context is None:
+            ssl_context = self._create_ssl_context(sslmode, self.ssl_root_cert)
+            self._ssl_contexts[key] = ssl_context
+        return ssl_context
 
     def _open_connection(self):
         dsn = self.dsn
@@ -87,16 +111,67 @@ class PostgresStore:
             raise ValueError("DATABASE_URL must include a PostgreSQL host and database name.")
         query = parse_qs(parsed.query)
         sslmode = query.get("sslmode", ["require"])[0]
-        ssl_context = self._create_ssl_context(sslmode, self.ssl_root_cert)
         raw_connection = pg8000.dbapi.connect(
             host=parsed.hostname,
             port=parsed.port or 5432,
             user=unquote(parsed.username or ""),
             password=unquote(parsed.password or ""),
             database=unquote(parsed.path.lstrip("/")),
-            ssl_context=ssl_context,
+            ssl_context=self._get_ssl_context(sslmode),
         )
         return _Connection(raw_connection)
+
+    @staticmethod
+    def _is_closed(connection):
+        # pg8000 sets the underlying socket to None when a connection is
+        # closed. Anything without that attribute is not a pg8000
+        # connection, so assume it is usable rather than discarding it.
+        raw = getattr(connection, "raw", None)
+        return raw is not None and hasattr(raw, "_usock") and raw._usock is None
+
+    def _discard_persistent_connection(self):
+        connection = getattr(self._local, "persistent_connection", None)
+        self._local.persistent_connection = None
+        self._local.persistent_last_used = None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    def _get_persistent_connection(self):
+        connection = getattr(self._local, "persistent_connection", None)
+        last_used = getattr(self._local, "persistent_last_used", None)
+        if connection is not None and self._is_closed(connection):
+            self._discard_persistent_connection()
+            connection = None
+        if connection is not None and last_used is not None:
+            idle = time.monotonic() - last_used
+            if idle > self._IDLE_PROBE_SECONDS:
+                try:
+                    connection.execute("SELECT 1").fetchone()
+                except Exception:
+                    self._discard_persistent_connection()
+                    connection = None
+        if connection is None:
+            connection = self._open_connection()
+            self._local.persistent_connection = connection
+        self._local.persistent_last_used = time.monotonic()
+        return connection
+
+    def close(self):
+        """Close this thread's persistent connection, if any.
+
+        The next operation opens a fresh one. Mainly for scripts and
+        tests; the long-running app simply keeps reusing its connection.
+        """
+        self._discard_persistent_connection()
+
+    @staticmethod
+    def _is_connection_error(error):
+        return isinstance(
+            error, (pg8000.dbapi.InterfaceError, pg8000.dbapi.OperationalError)
+        )
 
     @contextmanager
     def transaction(self):
@@ -111,17 +186,25 @@ class PostgresStore:
                 self._local.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
                 raise
             return
-        connection = self._open_connection()
+        connection = self._get_persistent_connection()
         self._local.connection = connection
         try:
             yield
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except Exception as error:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            if self._is_connection_error(error):
+                self._discard_persistent_connection()
             raise
         finally:
             self._local.connection = None
-            connection.close()
+            self._local.persistent_last_used = time.monotonic()
+            # The connection stays open for reuse; only a broken one was
+            # discarded above, so the next operation reconnects instead of
+            # failing on a dead socket.
 
     @contextmanager
     def _connection(self):
@@ -129,15 +212,20 @@ class PostgresStore:
         if connection is not None:
             yield connection
             return
-        connection = self._open_connection()
+        connection = self._get_persistent_connection()
         try:
             yield connection
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except Exception as error:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            if self._is_connection_error(error):
+                self._discard_persistent_connection()
             raise
         finally:
-            connection.close()
+            self._local.persistent_last_used = time.monotonic()
 
     @staticmethod
     def _extra(record, keys):
