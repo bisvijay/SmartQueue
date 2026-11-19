@@ -325,6 +325,25 @@ class ApiTests(unittest.TestCase):
         self.assertIn("language-picker", body)
         script.close()
 
+    def test_theme_picker_assets_are_served(self):
+        for path in ("/", "/login", "/register", "/reset-password", "/admin/login"):
+            page = self.client.get(path)
+            self.assertEqual(page.status_code, 200, path)
+            self.assertIn(b"/static/theme.js", page.data, path)
+            self.assertIn(b"smartqueue.theme", page.data, path)
+        script = self.client.get("/static/theme.js")
+        self.assertEqual(script.status_code, 200)
+        body = script.get_data(as_text=True)
+        self.assertIn("smartqueue.theme", body)
+        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+            self.assertIn(theme_id, body)
+        script.close()
+        styles = self.client.get("/static/styles.css")
+        css = styles.get_data(as_text=True)
+        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+            self.assertIn(f'[data-theme="{theme_id}"]', css)
+        styles.close()
+
     def test_new_provider_requires_approval_to_appear_or_accept_queue_entries(self):
         registration = self.client.post("/register", data={
             "name": "Pending Provider Owner",
