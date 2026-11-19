@@ -511,6 +511,59 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn(b"+12065550145", public_client.get("/api/providers").data)
         self.assertEqual(public_client.get(f"/api/providers/{provider_id}/queues").status_code, 401)
 
+    def test_customer_join_queue_with_service_selection_and_default(self):
+        provider_user = self.create_account("provider", "services-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "services-customer@example.com")
+        self.login_account("services-customer@example.com")
+
+        joined = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Color", "Cut"],
+        })
+        self.assertEqual(joined.status_code, 201)
+        self.assertEqual(joined.json["queue"]["service"], "Color, Cut")
+
+        self.assertEqual(self.client.delete(f"/api/queues/{joined.json['queue']['id']}").status_code, 200)
+        rejoined = self.client.post("/api/queues", json={"providerId": provider_id, "services": []})
+        self.assertEqual(rejoined.status_code, 201)
+        self.assertEqual(rejoined.json["queue"]["service"], "Cut")
+
+        self.assertEqual(self.client.delete(f"/api/queues/{rejoined.json['queue']['id']}").status_code, 200)
+        filtered = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Not offered", "Color"],
+        })
+        self.assertEqual(filtered.status_code, 201)
+        self.assertEqual(filtered.json["queue"]["service"], "Color")
+
+    def test_public_walk_in_multiple_services_and_default(self):
+        provider_user = self.create_account("provider", "multi-walkin-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        public_client = self.app.test_client()
+
+        form = public_client.get(f"/providers/{provider_id}/walk-in")
+        self.assertIn(b'name="services"', form.data)
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', form.data).group(1).decode()
+        submitted = public_client.post(f"/providers/{provider_id}/walk-in", data={
+            "csrf_token": token,
+            "name": "Multi Service",
+            "phone": "+1 206 555 0146",
+            "services": ["Cut", "Color"],
+        })
+        self.assertEqual(submitted.status_code, 303)
+        self.assertEqual(self.store.list("queues")[0]["service"], "Cut, Color")
+
+        form = public_client.get(f"/providers/{provider_id}/walk-in")
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', form.data).group(1).decode()
+        submitted = public_client.post(f"/providers/{provider_id}/walk-in", data={
+            "csrf_token": token,
+            "name": "No Selection",
+            "phone": "+1 206 555 0147",
+        })
+        self.assertEqual(submitted.status_code, 303)
+        self.assertEqual(self.store.list("queues")[1]["service"], "Cut")
+
     def test_customer_registration_persists_hashed_password(self):
         page = self.client.get("/register")
         self.assertEqual(page.status_code, 200)

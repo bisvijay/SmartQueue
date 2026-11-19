@@ -598,3 +598,13 @@ html[data-theme="peacock"] {
 
 .theme-picker-wrap { display: inline-flex; align-items: center; }
 .theme-picker { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; cursor: pointer; }
+
+.join-services-panel { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--accent-wash); }
+.join-services-heading { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+.join-services-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.service-option { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font-size: 13px; font-weight: 600; cursor: pointer; }
+.service-option input { accent-color: var(--green); margin: 0; }
+.join-services-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.join-services-actions { display: flex; gap: 8px; margin-top: 12px; }
+.walkin-service-picker { display: grid; gap: 8px; }
+.walkin-service-label { font-weight: 600; }

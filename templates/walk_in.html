@@ -43,13 +43,15 @@
             <label>Email address <small>Enter an email, a phone number, or both</small><input name="email" type="email" maxlength="254" autocomplete="email" /></label>
             <label>Phone number <small>Indian numbers default to +91; use +country code otherwise</small><input name="phone" type="tel" maxlength="24" autocomplete="tel" placeholder="98765 43210" /></label>
             <label>Address (optional)<input name="address" maxlength="200" autocomplete="street-address" /></label>
-            <label>Service
-              <select name="service">
-                {% if provider.services %}
-                {% for service in provider.services %}<option value="{{ service }}">{{ service }}</option>{% endfor %}
-                {% else %}<option value="General service">General service</option>{% endif %}
-              </select>
-            </label>
+            {% if provider.services %}
+            <div class="walkin-service-picker">
+              <span class="walkin-service-label">Service <small>You can pick more than one</small></span>
+              <div class="join-services-list">
+                {% for service in provider.services %}<label class="service-option"><input type="checkbox" name="services" value="{{ service }}" />{{ service }}</label>{% endfor %}
+              </div>
+              <small>If you pick none, {{ provider.services[0] }} will be booked.</small>
+            </div>
+            {% endif %}
             <button class="button button-dark" type="submit">Join queue <span aria-hidden="true">→</span></button>
           </form>
           {% endif %}

@@ -75,6 +75,10 @@
     "We’ll keep your place here": "हम आपकी जगह यहाँ सुरक्षित रखेंगे",
     "Leave queue": "कतार छोड़ें",
     "Join queue": "कतार में शामिल हों",
+    "What service do you need?": "आपको कौन-सी सेवा चाहिए?",
+    "You can pick more than one": "आप एक से अधिक चुन सकते हैं",
+    "You can pick more than one.": "आप एक से अधिक चुन सकते हैं।",
+    "Cancel": "रद्द करें",
     "You’re in line ✓": "आप लाइन में हैं ✓",
     "Queue paused": "कतार रुकी है",
     "Log in to join": "शामिल होने के लिए लॉग इन करें",
@@ -320,6 +324,8 @@
     [/^Joined (.+)$/, "शामिल हुए: $1"],
     [/^Join (.+)’s queue — SmartQueue$/, "$1 की कतार में शामिल हों — SmartQueue"],
     [/^Join (.+)’s queue\.$/, "$1 की कतार में शामिल हों।"],
+    [/^Nothing picked\? We’ll book “(.+)”\.$/, "कुछ नहीं चुना? हम “$1” बुक करेंगे।"],
+    [/^If you pick none, (.+) will be booked\.$/, "यदि आप कुछ नहीं चुनते, तो $1 बुक होगी।"],
   ];
 
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA"]);

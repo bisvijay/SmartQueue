@@ -166,10 +166,30 @@ def create_app(test_config=None):
             visible_entries.append(visible)
         return visible_entries
 
+    def resolve_service_selection(provider, requested):
+        """Resolve a customer's service selection against the provider's list.
+
+        Accepts a list of names (or a single name). Unknown names are dropped
+        and duplicates removed; when nothing valid remains, the provider's
+        first service is the default, or "General service" when the provider
+        lists none. Returns one comma-joined string for the queue record.
+        """
+        services = provider.get("services") or []
+        if isinstance(requested, str):
+            requested = [requested]
+        selected = []
+        if isinstance(requested, (list, tuple)):
+            for item in requested:
+                if isinstance(item, str) and item.strip() in services and item.strip() not in selected:
+                    selected.append(item.strip())
+        if not selected:
+            selected = [services[0] if services else "General service"]
+        return ", ".join(selected)
+
     def create_walk_in_entry(provider, body):
         if not isinstance(body, dict):
             raise ApiError(400, "Request body must be an object.")
-        if set(body) - {"name", "email", "phone", "address", "service"}:
+        if set(body) - {"name", "email", "phone", "address", "service", "services"}:
             raise ApiError(400, "Only walk-in customer details can be submitted.")
         store.lock_providers([provider["id"]])
         provider = require_provider(str(provider["id"]))
@@ -196,15 +216,10 @@ def create_app(test_config=None):
         address = body.get("address", "")
         if not isinstance(address, str) or len(address.strip()) > 200:
             raise ApiError(400, "Address must be no longer than 200 characters.")
-        services = provider.get("services") or []
-        service = body.get("service") or (services[0] if services else "General service")
-        if (
-            not isinstance(service, str)
-            or not service.strip()
-            or len(service.strip()) > 60
-            or (services and service.strip() not in services)
-        ):
-            raise ApiError(400, "Choose one of the services offered by this provider.")
+        requested = body.get("services")
+        if requested is None:
+            requested = body.get("service")
+        service = resolve_service_selection(provider, requested)
 
         active_queues = active_provider_queues(provider["id"])
         service_duration = max(1, int(provider.get("serviceDuration", 15)))
@@ -788,6 +803,9 @@ def create_app(test_config=None):
                 provider = require_provider(provider_id)
                 body = request.form.to_dict()
                 body.pop("csrf_token", None)
+                selected_services = request.form.getlist("services")
+                if selected_services:
+                    body["services"] = selected_services
                 create_walk_in_entry(provider, body)
         except ApiError as error:
             return render_template(
@@ -900,6 +918,7 @@ def create_app(test_config=None):
                 "id": str(uuid.uuid4()),
                 "customerId": user["id"],
                 "providerId": provider["id"],
+                "service": resolve_service_selection(provider, body.get("services")),
                 "peopleAhead": len(active_queues),
                 "wait": len(active_queues) * service_duration,
                 "status": "waiting",

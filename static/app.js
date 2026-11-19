@@ -103,16 +103,83 @@
     });
     filterProviders();
 
-    document.querySelectorAll(".join-queue").forEach((button) => button.addEventListener("click", async () => {
+    async function joinQueue(button, services) {
       try {
         await api("/api/queues", {
           method: "POST",
-          body: JSON.stringify({ providerId: button.dataset.providerId }),
+          body: JSON.stringify({ providerId: button.dataset.providerId, ...(services ? { services } : {}) }),
         });
         window.location.reload();
       } catch (error) {
         showError(error.message);
       }
+    }
+
+    function openServicePicker(button, card, services) {
+      document.querySelectorAll(".join-services-panel").forEach((panel) => panel.remove());
+      document.querySelectorAll(".join-queue").forEach((item) => { item.hidden = false; });
+      const panel = document.createElement("div");
+      panel.className = "join-services-panel";
+      const heading = document.createElement("p");
+      heading.className = "join-services-heading";
+      heading.textContent = "What service do you need?";
+      panel.append(heading);
+      const list = document.createElement("div");
+      list.className = "join-services-list";
+      const boxes = [];
+      for (const service of services) {
+        const label = document.createElement("label");
+        label.className = "service-option";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = service;
+        boxes.push(box);
+        const text = document.createElement("span");
+        text.textContent = service;
+        label.append(box, text);
+        list.append(label);
+      }
+      panel.append(list);
+      const note = document.createElement("p");
+      note.className = "join-services-note";
+      note.textContent = `You can pick more than one. Nothing picked? We’ll book “${services[0]}”.`;
+      panel.append(note);
+      const actions = document.createElement("div");
+      actions.className = "join-services-actions";
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.className = "button button-dark";
+      confirm.textContent = "Join queue";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "button button-outline";
+      cancel.textContent = "Cancel";
+      actions.append(confirm, cancel);
+      panel.append(actions);
+      confirm.addEventListener("click", async () => {
+        confirm.disabled = true;
+        await joinQueue(button, boxes.filter((box) => box.checked).map((box) => box.value));
+      });
+      cancel.addEventListener("click", () => {
+        panel.remove();
+        button.hidden = false;
+      });
+      button.hidden = true;
+      card.querySelector(".card-footer").after(panel);
+    }
+
+    document.querySelectorAll(".join-queue").forEach((button) => button.addEventListener("click", () => {
+      const card = button.closest(".provider-card");
+      const services = card
+        ? [...card.querySelectorAll(".service-tags span")].map((tag) => tag.textContent.trim()).filter(Boolean)
+        : [];
+      if (button.classList.contains("button-joined") || services.length === 0) {
+        // Already in line, or the provider lists no services: join directly —
+        // the server books the default service.
+        joinQueue(button);
+        return;
+      }
+      openServicePicker(button, card, services);
     }));
 
     document.querySelector("#leave-queue")?.addEventListener("click", async (event) => {
