@@ -602,6 +602,49 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b">Admin<", landing.data)
         self.assertNotIn(b"avatar-button", landing.data)
 
+    def test_header_chip_survives_a_missing_user_name(self):
+        user = self.create_account()
+        record = self.store.get("users", user["id"])
+        record["name"] = ""
+        index_entry = {key: value for key, value in record.items() if key != "passwordHash"}
+        self.store.put("users", user["id"], record, index_entry)
+        self.login_account("jamie@example.com")
+        landing = self.client.get("/")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn(b"signed-in-chip", landing.data)
+        self.assertIn(b"Guest", landing.data)
+
+    def test_current_queues_skips_entries_whose_provider_is_gone(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": 1})
+        self.assertEqual(joined.status_code, 201)
+        self.store.delete("providers", "1")
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(current.json["queues"], [])
+
+    def test_join_conflict_is_logged_with_a_clear_message(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        original_create = self.store.create
+
+        def failing_create(collection, *args, **kwargs):
+            if collection == "queues":
+                return False
+            return original_create(collection, *args, **kwargs)
+
+        self.store.create = failing_create
+        try:
+            with self.assertLogs("smartqueue", level="WARNING") as captured:
+                response = self.client.post("/api/queues", json={"providerId": 1})
+        finally:
+            self.store.create = original_create
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("couldn't add you", response.json["error"])
+        messages = [record.getMessage() for record in captured.records]
+        self.assertTrue(any(message.startswith("queue.join_conflict") for message in messages))
+
     def test_provider_dashboard_shows_booked_services_and_view_options(self):
         provider_user = self.create_account("provider", "view-owner@example.com")
         provider_id = str(provider_user["providerId"])

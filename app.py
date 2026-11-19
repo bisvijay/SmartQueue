@@ -896,7 +896,9 @@ def create_app(test_config=None):
         for queue in queues:
             active = active_provider_queues(queue["providerId"])
             position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
-            provider = require_provider(str(queue["providerId"]))
+            provider = store.get("providers", str(queue["providerId"]))
+            if provider is None:
+                continue
             duration = max(1, int(provider.get("serviceDuration", 15)))
             enriched.append({
                 **queue,
@@ -952,7 +954,8 @@ def create_app(test_config=None):
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
             if not store.create("queues", queue["id"], queue, queue):
-                raise ApiError(409, "Your queue changed while joining. Refresh and try again.")
+                log.warning("queue.join_conflict customer=%s provider=%s", user["id"], provider["id"])
+                raise ApiError(409, "We couldn't add you to this queue. Refresh and try again.")
             log.info(
                 "queue.join queue=%s customer=%s provider=%s service=%s",
                 queue["id"],
