@@ -52,7 +52,12 @@ a { color: inherit; text-decoration: none; }
 .provider-card-actions { display: flex; align-items: center; gap: 8px; }
 .favorite-button { display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid #e5e9e2; border-radius: 50%; background: white; color: #899187; font-size: 15px; cursor: pointer; }
 .favorite-button:hover, .favorite-button.is-favorite { border-color: #e7d2ca; background: #fff3ef; color: #bf6653; }
-.avatar-button { width: 37px; height: 37px; background: var(--accent-soft); border: 0; border-radius: 50%; color: var(--accent-mid); font-size: 11px; font-weight: 700; cursor: pointer; }
+.signed-in-chip { display: inline-flex; align-items: center; gap: 9px; }
+.signed-in-avatar { display: grid; place-items: center; width: 37px; height: 37px; flex: 0 0 auto; border-radius: 50%; background: var(--accent-soft); color: var(--accent-mid); font-size: 11px; font-weight: 700; line-height: 1; }
+.signed-in-meta { display: flex; flex-direction: column; line-height: 1.2; }
+.signed-in-meta strong { font-size: 12.5px; color: var(--green-dark); white-space: nowrap; }
+.signed-in-meta small { font-size: 10.5px; color: #899187; }
+.admin-link { white-space: nowrap; }
 .queue-shortcut { color: var(--green); font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .queue-dot, .status-dot, .pulse-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; background: var(--accent-bright); border-radius: 50%; }
 
@@ -379,7 +384,10 @@ h1, h2, h3, p { margin-top: 0; }
   .main-nav .nav-link.active::after { bottom: -22px; }
   .header-actions { gap: 6px; }
   .header-actions .login-link, .header-actions .logout-form .nav-link { font-size: 9px; }
-  .avatar-button { width: 32px; height: 32px; }
+  .signed-in-avatar { width: 32px; height: 32px; }
+  .signed-in-chip { gap: 6px; }
+  .signed-in-meta small { display: none; }
+  .signed-in-meta strong { font-size: 10px; }
   .queue-shortcut { font-size: 9px; }
   .hero-inner { width: calc(100% - 40px); min-height: auto; display: block; position: relative; }
   .hero-copy { padding: 44px 0 39px; }

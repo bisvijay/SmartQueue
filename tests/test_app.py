@@ -587,6 +587,21 @@ class ApiTests(unittest.TestCase):
         contents = log_path.read_text(encoding="utf-8")
         self.assertIn("SmartQueue app created: store=json-file", contents)
 
+    def test_header_shows_signed_in_user_and_admin_link(self):
+        signed_out = self.client.get("/")
+        self.assertNotIn(b"signed-in-chip", signed_out.data)
+        self.assertIn(b">Admin<", signed_out.data)
+        self.assertNotIn(b"avatar-button", signed_out.data)
+
+        self.create_account()
+        self.login_account("jamie@example.com")
+        landing = self.client.get("/")
+        self.assertIn(b"signed-in-chip", landing.data)
+        self.assertIn(b"Jamie Rivera", landing.data)
+        self.assertIn(b">JR<", landing.data)
+        self.assertIn(b">Admin<", landing.data)
+        self.assertNotIn(b"avatar-button", landing.data)
+
     def test_provider_dashboard_shows_booked_services_and_view_options(self):
         provider_user = self.create_account("provider", "view-owner@example.com")
         provider_id = str(provider_user["providerId"])

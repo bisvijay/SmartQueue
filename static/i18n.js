@@ -27,6 +27,8 @@
     "Create an account": "खाता बनाएँ",
     "Customer discovery": "ग्राहक खोज",
     "SmartQueue home": "SmartQueue होम",
+    "Administrator": "प्रशासक",
+    "Admin": "एडमिन",
     "Administrator sign in": "प्रशासक साइन इन",
 
     // Hero
@@ -95,6 +97,7 @@
     "Waiting": "प्रतीक्षा में",
     "Start service": "सेवा शुरू करें",
     "Customer": "ग्राहक",
+    "Provider": "प्रदाता",
     "No places found just yet": "अभी कोई जगह नहीं मिली",
     "Try another search or choose a different category.": "कोई और खोज आज़माएँ या दूसरी श्रेणी चुनें।",
     "Clear filters": "फ़िल्टर हटाएँ",
