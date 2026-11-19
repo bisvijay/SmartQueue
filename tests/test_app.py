@@ -2,14 +2,18 @@ from io import BytesIO
 import json
 import os
 import re
+import ssl
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from uuid import uuid4
 
+import pg8000.dbapi
 from PIL import Image
 
 from app import create_app
+from postgres_store import PostgresStore, _uuid
 from store import FileStore
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -44,6 +48,168 @@ class StoreTests(unittest.TestCase):
             self.store.put_config("../outside.json", {})
 
 
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakeConnection:
+    """Stand-in for _Connection that counts opens without a live database."""
+
+    PROVIDER_ROW = {
+        "app_data": {},
+        "id": "11111111-1111-1111-1111-111111111111",
+        "owner_account_id": None,
+        "name": "Test Salon",
+        "category": "Salon",
+        "tagline": "Test",
+        "address": "1 Test Street",
+        "status": "open",
+        "public_email": "",
+        "public_phone_e164": "",
+        "approval_status": "approved",
+        "approval_note": "",
+        "approval_updated_at": None,
+    }
+
+    def __init__(self, fail_on=None):
+        self.raw = type("Raw", (), {"_usock": object()})()
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self.fail_on = fail_on
+        self.executed = []
+
+    def execute(self, query, params=None):
+        self.executed.append(query)
+        if self.fail_on and self.fail_on in query:
+            raise pg8000.dbapi.InterfaceError("connection is closed")
+        if query.strip().upper().startswith("SELECT 1"):
+            return _FakeResult([{"?column?": 1}])
+        if "FROM provider_services" in query:
+            return _FakeResult([])
+        if "FROM providers" in query:
+            return _FakeResult([dict(self.PROVIDER_ROW)])
+        return _FakeResult([])
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+        self.raw._usock = None
+
+
+class PostgresStoreTests(unittest.TestCase):
+    def test_postgres_backend_is_opt_in_and_legacy_ids_map_stably_to_uuids(self):
+        self.assertEqual(_uuid("legacy-provider-5"), _uuid("legacy-provider-5"))
+        self.assertNotEqual(_uuid("legacy-provider-5"), _uuid("legacy-provider-6"))
+        self.assertEqual(len(_uuid("legacy-provider-5")), 36)
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        self.assertEqual(store.dsn, "postgresql://user:password@localhost/smartqueue")
+        ssl_context = store._create_ssl_context("require", None)
+        self.assertTrue(ssl_context.check_hostname)
+        self.assertEqual(ssl_context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(
+            PostgresStore(
+                "postgresql://user:password@localhost/smartqueue",
+                ssl_root_cert="root-ca.pem",
+            ).ssl_root_cert
+        )
+        with self.assertRaises(ValueError):
+            store._create_ssl_context("disable", None)
+        with self.assertRaises(ValueError):
+            PostgresStore("file:///tmp/store")
+
+    def test_postgres_store_reuses_one_connection_across_operations(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(
+            store.get("providers", "11111111-1111-1111-1111-111111111111")["name"],
+            "Test Salon",
+        )
+        with store.transaction():
+            self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 1)
+        self.assertFalse(opened[0].closed)
+        self.assertGreaterEqual(opened[0].commits, 3)
+        store.close()
+        self.assertTrue(opened[0].closed)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+
+    def test_postgres_store_replaces_a_closed_connection(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        opened[0].raw._usock = None
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+        self.assertTrue(opened[0].closed)
+
+    def test_postgres_store_discards_broken_connection_and_probes_after_idle(self):
+        store = PostgresStore("postgresql://user:password@localhost/smartqueue")
+        opened = []
+
+        def opener():
+            connection = _FakeConnection()
+            opened.append(connection)
+            return connection
+
+        store._open_connection = opener
+        self.assertEqual(len(store.list("providers")), 1)
+        # Simulate the pooler closing an idle connection: the next
+        # operation must probe, replace it, and succeed.
+        store._local.persistent_last_used = time.monotonic() - 3600
+        opened[0].fail_on = "SELECT 1"
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 2)
+        # A failure mid-operation discards the broken connection so the
+        # following operation reconnects instead of reusing a dead socket.
+        opened[1].fail_on = "FROM providers"
+        with self.assertRaises(pg8000.dbapi.InterfaceError):
+            store.list("providers")
+        self.assertTrue(opened[1].closed)
+        self.assertEqual(len(store.list("providers")), 1)
+        self.assertEqual(len(opened), 3)
+
+    def test_app_selects_postgres_only_when_database_url_is_configured(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app({
+                "TESTING": True,
+                "DATA_DIR": Path(temp_dir) / "store",
+                "SEED_DIR": ROOT / "data" / "seed" / "providers",
+                "DATABASE_URL": "postgresql://user:password@localhost/smartqueue",
+            })
+            self.assertTrue(app.config["POSTGRES_ENABLED"])
+            self.assertIsInstance(app.extensions["smartqueue_store"], PostgresStore)
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -51,6 +217,7 @@ class ApiTests(unittest.TestCase):
             "TESTING": True,
             "DATA_DIR": Path(self.temp_dir.name) / "store",
             "SEED_DIR": ROOT / "data" / "seed" / "providers",
+            "ADMIN_PASSWORD": "test-admin-password",
         })
         self.client = self.app.test_client()
         self.store = self.app.extensions["smartqueue_store"]
@@ -67,6 +234,7 @@ class ApiTests(unittest.TestCase):
             "email": identifier if "@" in identifier else "",
             "phone": identifier if identifier.startswith("+") else "",
             "password": password,
+            "confirm_password": password,
             "role": role,
         }
         if role == "provider":
@@ -78,7 +246,13 @@ class ApiTests(unittest.TestCase):
             })
         response = self.client.post("/register", data=data)
         self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
-        return next(user for user in self.store.list("users") if user.get("email") == data["email"] or user.get("phone") == data["phone"])
+        user = next(user for user in self.store.list("users") if user.get("email") == data["email"] or user.get("phone") == data["phone"])
+        if role == "provider":
+            provider_id = str(user["providerId"])
+            provider = self.store.get("providers", provider_id)
+            provider["approvalStatus"] = "approved"
+            self.store.put("providers", provider_id, provider, provider)
+        return user
 
     def login_account(self, identifier, password="another-long-password"):
         page = self.client.get("/login")
@@ -91,6 +265,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
         with self.client.session_transaction() as browser_session:
             self.client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
+        return response
+
+    def login_admin(self, password="test-admin-password"):
+        page = self.client.get("/admin/login")
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', page.data).group(1).decode()
+        response = self.client.post("/admin/login", data={
+            "password": password,
+            "csrf_token": token,
+        })
+        expected_status = 303 if password == "test-admin-password" else 401
+        self.assertEqual(response.status_code, expected_status, response.get_data(as_text=True))
+        if response.status_code == 303:
+            with self.client.session_transaction() as browser_session:
+                self.client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
         return response
 
     def test_seed_and_home_render(self):
@@ -110,12 +298,400 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(provider.status_code, 200)
         self.assertIn(b"Here\xe2\x80\x99s how things are moving at Jamie&#39;s Service.", provider.data)
         self.assertIn(b"Start next", provider.data)
+        self.assertIn(b"Add walk-in", provider.data)
+        self.assertIn(b'id="toggle-presentation"', provider.data)
+        self.assertIn(b"Expand display", provider.data)
+        self.assertIn(b"Join your queue", provider.data)
+        self.assertEqual(admin.status_code, 302)
+        self.login_admin()
+        admin = self.client.get("/?view=admin")
         self.assertEqual(admin.status_code, 200)
-        self.assertIn(b"Platform overview", admin.data)
+        self.assertIn(b"Provider approvals", admin.data)
         self.assertEqual(script.status_code, 200)
         self.assertEqual(styles.status_code, 200)
         script.close()
         styles.close()
+
+    def test_language_picker_assets_are_served(self):
+        for path in ("/", "/login", "/register", "/reset-password", "/admin/login"):
+            page = self.client.get(path)
+            self.assertEqual(page.status_code, 200, path)
+            self.assertIn(b"/static/i18n.js", page.data, path)
+        script = self.client.get("/static/i18n.js")
+        self.assertEqual(script.status_code, 200)
+        body = script.get_data(as_text=True)
+        self.assertIn("smartqueue.lang", body)
+        self.assertIn("कतार में शामिल हों", body)  # "Join queue" in Hindi
+        self.assertIn("language-picker", body)
+        script.close()
+
+    def test_theme_picker_assets_are_served(self):
+        for path in ("/", "/login", "/register", "/reset-password", "/admin/login"):
+            page = self.client.get(path)
+            self.assertEqual(page.status_code, 200, path)
+            self.assertIn(b"/static/theme.js", page.data, path)
+            self.assertIn(b"smartqueue.theme", page.data, path)
+        script = self.client.get("/static/theme.js")
+        self.assertEqual(script.status_code, 200)
+        body = script.get_data(as_text=True)
+        self.assertIn("smartqueue.theme", body)
+        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+            self.assertIn(theme_id, body)
+        script.close()
+        styles = self.client.get("/static/styles.css")
+        css = styles.get_data(as_text=True)
+        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+            self.assertIn(f'[data-theme="{theme_id}"]', css)
+        styles.close()
+
+    def test_new_provider_requires_approval_to_appear_or_accept_queue_entries(self):
+        registration = self.client.post("/register", data={
+            "name": "Pending Provider Owner",
+            "email": "pending-owner@example.com",
+            "password": "another-long-password",
+            "confirm_password": "another-long-password",
+            "role": "provider",
+            "business_name": "Pending Sample Service",
+            "category": "Healthcare",
+            "address": "Mumbai, India",
+            "services": "Consultation",
+        })
+        self.assertEqual(registration.status_code, 303)
+        owner = next(user for user in self.store.list("users") if user.get("email") == "pending-owner@example.com")
+        provider_id = str(owner["providerId"])
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["approvalStatus"], "pending")
+
+        listing = self.client.get("/")
+        public_api = self.client.get("/api/providers")
+        self.assertNotIn(b"Pending Sample Service", listing.data)
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in json.loads(public_api.data)],
+        )
+        self.assertEqual(self.client.get(f"/providers/{provider_id}/qr.svg").status_code, 403)
+        self.assertEqual(self.client.get(f"/providers/{provider_id}/walk-in").status_code, 403)
+
+        self.create_account("customer", "approval-customer@example.com")
+        self.login_account("approval-customer@example.com")
+        not_approved = self.client.post("/api/queues", json={"providerId": provider_id})
+        self.assertEqual(not_approved.status_code, 403)
+
+        self.client.post("/logout")
+        self.assertEqual(self.client.get("/?view=admin").status_code, 302)
+        admin_login_page = self.client.get("/admin/login")
+        admin_csrf = re.search(rb'name="csrf_token" value="([^"]+)"', admin_login_page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = admin_csrf
+        self.assertEqual(
+            self.client.patch(f"/api/admin/providers/{provider_id}/approval", json={"action": "approve"}).status_code,
+            403,
+        )
+        self.login_admin(password="incorrect-admin-password")
+
+    def test_admin_can_approve_reject_and_provider_can_request_rereview(self):
+        provider_owner = self.create_account(
+            "provider",
+            "review-owner@example.com",
+        )
+        provider_id = str(provider_owner["providerId"])
+        provider = self.store.get("providers", provider_id)
+        provider["approvalStatus"] = "pending"
+        self.store.put("providers", provider_id, provider, provider)
+
+        self.assertEqual(self.client.get("/?view=admin").status_code, 302)
+        login_page = self.client.get("/admin/login")
+        self.assertEqual(login_page.status_code, 200)
+        bad_login_token = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = bad_login_token
+        self.assertEqual(self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "approve"},
+        ).status_code, 403)
+        self.assertIn(b"Administrator password", login_page.data)
+        bad_login = self.client.post("/admin/login", data={
+            "password": "wrong-admin-password",
+            "csrf_token": bad_login_token,
+        })
+        self.assertEqual(bad_login.status_code, 401)
+
+        self.login_admin()
+        dashboard = self.client.get("/?view=admin")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Jamie&#39;s Service", dashboard.data)
+        approved = self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "approve", "note": "Business details reviewed."},
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json["provider"]["approvalStatus"], "approved")
+        self.assertEqual(self.store.list("provider_reviews")[-1]["decision"], "approved")
+        self.assertIn(
+            provider_id,
+            [str(provider["id"]) for provider in self.client.get("/api/providers").json],
+        )
+
+        rejected = self.client.patch(
+            f"/api/admin/providers/{provider_id}/approval",
+            json={"action": "reject", "note": "Please verify your business address."},
+        )
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(rejected.json["provider"]["approvalStatus"], "rejected")
+        self.assertEqual(rejected.json["provider"]["status"], "Paused")
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in self.client.get("/api/providers").json],
+        )
+
+        owner_client = self.app.test_client()
+        owner_login_page = owner_client.get("/login")
+        owner_csrf = re.search(rb'name="csrf_token" value="([^"]+)"', owner_login_page.data).group(1).decode()
+        owner_client.post("/login", data={
+            "identifier": "review-owner@example.com",
+            "password": "another-long-password",
+            "csrf_token": owner_csrf,
+        })
+        with owner_client.session_transaction() as browser_session:
+            owner_client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
+        provider_dashboard = owner_client.get("/?view=provider")
+        self.assertIn(b"Please verify your business address.", provider_dashboard.data)
+        resubmitted = owner_client.post(f"/api/providers/{provider_id}/request-review")
+        self.assertEqual(resubmitted.status_code, 200)
+        self.assertEqual(resubmitted.json["provider"]["approvalStatus"], "pending")
+        self.assertNotIn(
+            provider_id,
+            [str(provider["id"]) for provider in owner_client.get("/api/providers").json],
+        )
+
+    def test_provider_qr_and_live_queue_are_owner_scoped(self):
+        owner = self.create_account("provider", "owner@example.com")
+        other_owner = self.create_account("provider", "other-owner@example.com")
+        self.login_account("owner@example.com")
+
+        qr = self.client.get(f"/providers/{owner['providerId']}/qr.svg")
+        self.assertEqual(qr.status_code, 200)
+        self.assertEqual(qr.mimetype, "image/svg+xml")
+        self.assertIn(b"<svg", qr.data)
+        self.assertEqual(
+            self.client.get(f"/api/providers/{owner['providerId']}/queues").json,
+            {"queues": []},
+        )
+
+        self.login_account("other-owner@example.com")
+        self.assertEqual(self.client.get(f"/api/providers/{owner['providerId']}/queues").status_code, 403)
+
+    def test_public_walk_in_form_and_qr_join_without_account(self):
+        provider_user = self.create_account("provider", "public-walkin-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        public_client = self.app.test_client()
+
+        qr = public_client.get(f"/providers/{provider_id}/qr.svg")
+        form = public_client.get(f"/providers/{provider_id}/walk-in")
+        self.assertEqual(qr.status_code, 200)
+        self.assertEqual(qr.mimetype, "image/svg+xml")
+        self.assertEqual(form.status_code, 200)
+        self.assertIn(b"Full name", form.data)
+        self.assertIn(b"Your contact information is shared only with this provider", form.data)
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', form.data).group(1).decode()
+
+        submitted = public_client.post(f"/providers/{provider_id}/walk-in", data={
+            "csrf_token": token,
+            "name": "Public Walk-in",
+            "phone": "+1 206 555 0145",
+            "service": "Cut",
+        })
+        self.assertEqual(submitted.status_code, 303)
+        self.assertIn("joined=1", submitted.headers["Location"])
+        confirmation = public_client.get(submitted.headers["Location"])
+        self.assertIn(b"You\xe2\x80\x99re on the list", confirmation.data)
+        queue = self.store.list("queues")[0]
+        self.assertEqual(queue["customerId"], None)
+        self.assertEqual(queue["phone"], "+12065550145")
+        self.assertEqual(queue["source"], "walk-in")
+        self.assertEqual(public_client.get("/api/providers").status_code, 200)
+        self.assertNotIn(b"+12065550145", public_client.get("/api/providers").data)
+        self.assertEqual(public_client.get(f"/api/providers/{provider_id}/queues").status_code, 401)
+
+    def test_customer_join_queue_with_service_selection_and_default(self):
+        provider_user = self.create_account("provider", "services-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "services-customer@example.com")
+        self.login_account("services-customer@example.com")
+
+        joined = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Color", "Cut"],
+        })
+        self.assertEqual(joined.status_code, 201)
+        self.assertEqual(joined.json["queue"]["service"], "Color, Cut")
+
+        self.assertEqual(self.client.delete(f"/api/queues/{joined.json['queue']['id']}").status_code, 200)
+        rejoined = self.client.post("/api/queues", json={"providerId": provider_id, "services": []})
+        self.assertEqual(rejoined.status_code, 201)
+        self.assertEqual(rejoined.json["queue"]["service"], "Cut")
+
+        self.assertEqual(self.client.delete(f"/api/queues/{rejoined.json['queue']['id']}").status_code, 200)
+        filtered = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Not offered", "Color"],
+        })
+        self.assertEqual(filtered.status_code, 201)
+        self.assertEqual(filtered.json["queue"]["service"], "Color")
+
+    def test_customer_can_join_multiple_queues_and_leave_one(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        first = self.client.post("/api/queues", json={"providerId": 1, "services": ["Haircut"]})
+        second = self.client.post("/api/queues", json={"providerId": 3})
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(self.store.get("providers", "1")["people"], 1)
+        self.assertEqual(self.store.get("providers", "3")["people"], 1)
+
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(len(current.json["queues"]), 2)
+
+        landing = self.client.get("/")
+        self.assertEqual(landing.data.count(b"Leave queue"), 2)
+        self.assertIn(b"Willow &amp; Sage", landing.data)
+        self.assertIn(b"Little Bird Coffee", landing.data)
+        self.assertIn(b"Haircut", landing.data)
+
+        left = self.client.delete(f"/api/queues/{first.json['queue']['id']}")
+        self.assertEqual(left.status_code, 200)
+        self.assertIsNone(self.store.get("queues", first.json["queue"]["id"]))
+        self.assertIsNotNone(self.store.get("queues", second.json["queue"]["id"]))
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(
+            [item["providerId"] for item in current.json["queues"]],
+            [second.json["queue"]["providerId"]],
+        )
+
+    def test_queue_events_and_errors_are_logged(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        with self.assertLogs("smartqueue", level="INFO") as captured:
+            joined = self.client.post("/api/queues", json={"providerId": 1, "services": ["Haircut"]})
+            self.assertEqual(joined.status_code, 201)
+            left = self.client.delete(f"/api/queues/{joined.json['queue']['id']}")
+            self.assertEqual(left.status_code, 200)
+            rejected = self.client.post("/api/queues", json={"providerId": 999})
+            self.assertEqual(rejected.status_code, 404)
+        messages = [record.getMessage() for record in captured.records]
+        self.assertTrue(any(message.startswith("queue.join") for message in messages))
+        self.assertTrue(any(message.startswith("queue.leave") for message in messages))
+        self.assertTrue(any(message.startswith("api error status=404") for message in messages))
+
+    def test_log_file_is_written_next_to_data_dir(self):
+        log_path = Path(self.temp_dir.name) / "logs" / "smartqueue.log"
+        self.assertTrue(log_path.exists())
+        contents = log_path.read_text(encoding="utf-8")
+        self.assertIn("SmartQueue app created: store=json-file", contents)
+
+    def test_header_shows_signed_in_user_and_admin_link(self):
+        signed_out = self.client.get("/")
+        self.assertNotIn(b"signed-in-chip", signed_out.data)
+        self.assertIn(b">Admin<", signed_out.data)
+        self.assertNotIn(b"avatar-button", signed_out.data)
+
+        self.create_account()
+        self.login_account("jamie@example.com")
+        landing = self.client.get("/")
+        self.assertIn(b"signed-in-chip", landing.data)
+        self.assertIn(b"Jamie Rivera", landing.data)
+        self.assertIn(b">JR<", landing.data)
+        self.assertIn(b">Admin<", landing.data)
+        self.assertNotIn(b"avatar-button", landing.data)
+
+    def test_header_chip_survives_a_missing_user_name(self):
+        user = self.create_account()
+        record = self.store.get("users", user["id"])
+        record["name"] = ""
+        index_entry = {key: value for key, value in record.items() if key != "passwordHash"}
+        self.store.put("users", user["id"], record, index_entry)
+        self.login_account("jamie@example.com")
+        landing = self.client.get("/")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn(b"signed-in-chip", landing.data)
+        self.assertIn(b"Guest", landing.data)
+
+    def test_current_queues_skips_entries_whose_provider_is_gone(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": 1})
+        self.assertEqual(joined.status_code, 201)
+        self.store.delete("providers", "1")
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(current.json["queues"], [])
+
+    def test_join_conflict_is_logged_with_a_clear_message(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        original_create = self.store.create
+
+        def failing_create(collection, *args, **kwargs):
+            if collection == "queues":
+                return False
+            return original_create(collection, *args, **kwargs)
+
+        self.store.create = failing_create
+        try:
+            with self.assertLogs("smartqueue", level="WARNING") as captured:
+                response = self.client.post("/api/queues", json={"providerId": 1})
+        finally:
+            self.store.create = original_create
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("couldn't add you", response.json["error"])
+        messages = [record.getMessage() for record in captured.records]
+        self.assertTrue(any(message.startswith("queue.join_conflict") for message in messages))
+
+    def test_provider_dashboard_shows_booked_services_and_view_options(self):
+        provider_user = self.create_account("provider", "view-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "view-customer@example.com")
+        self.login_account("view-customer@example.com")
+        joined = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Color", "Cut"],
+        })
+        self.assertEqual(joined.status_code, 201)
+
+        self.login_account("view-owner@example.com")
+        queues = self.client.get(f"/api/providers/{provider_id}/queues")
+        self.assertEqual(queues.json["queues"][0]["customerService"], "Color, Cut")
+        dashboard = self.client.get("/?view=provider")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"heading-service", dashboard.data)
+        self.assertIn(b'class="service-pill"', dashboard.data)
+        self.assertIn(b"queue-service-filter", dashboard.data)
+        self.assertIn(b"data-view-toggle", dashboard.data)
+
+    def test_public_walk_in_multiple_services_and_default(self):
+        provider_user = self.create_account("provider", "multi-walkin-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        public_client = self.app.test_client()
+
+        form = public_client.get(f"/providers/{provider_id}/walk-in")
+        self.assertIn(b'name="services"', form.data)
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', form.data).group(1).decode()
+        submitted = public_client.post(f"/providers/{provider_id}/walk-in", data={
+            "csrf_token": token,
+            "name": "Multi Service",
+            "phone": "+1 206 555 0146",
+            "services": ["Cut", "Color"],
+        })
+        self.assertEqual(submitted.status_code, 303)
+        self.assertEqual(self.store.list("queues")[0]["service"], "Cut, Color")
+
+        form = public_client.get(f"/providers/{provider_id}/walk-in")
+        token = re.search(rb'name="csrf_token" value="([^"]+)"', form.data).group(1).decode()
+        submitted = public_client.post(f"/providers/{provider_id}/walk-in", data={
+            "csrf_token": token,
+            "name": "No Selection",
+            "phone": "+1 206 555 0147",
+        })
+        self.assertEqual(submitted.status_code, 303)
+        self.assertEqual(self.store.list("queues")[1]["service"], "Cut")
 
     def test_customer_registration_persists_hashed_password(self):
         page = self.client.get("/register")
@@ -126,6 +702,7 @@ class ApiTests(unittest.TestCase):
             "name": "Jamie Rivera",
             "email": "Jamie@example.com",
             "password": "a-long-test-password",
+            "confirm_password": "a-long-test-password",
             "role": "customer",
         })
         self.assertEqual(response.status_code, 303)
@@ -140,11 +717,24 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(check_password_hash(record["passwordHash"], "a-long-test-password"))
         self.assertNotIn("a-long-test-password", json.dumps(self.store.export_all("users")))
 
+    def test_registration_rejects_mismatched_password_confirmation(self):
+        response = self.client.post("/register", data={
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "password": "a-long-test-password",
+            "confirm_password": "a-different-long-password",
+            "role": "customer",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"The passwords do not match", response.data)
+        self.assertEqual(self.store.list("users"), [])
+
     def test_provider_registration_creates_provider_listing(self):
         response = self.client.post("/register", data={
             "name": "Taylor Lee",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "provider",
             "business_name": "Taylor's Salon",
             "category": "Salon",
@@ -160,6 +750,76 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(provider["name"], "Taylor's Salon")
         self.assertEqual(provider["services"], ["Cut", "Color"])
         self.assertEqual(provider["people"], 0)
+        self.assertEqual(provider["contactEmail"], "taylor@example.com")
+        self.assertIsNone(provider["contactPhone"])
+        self.login_admin()
+        approval = self.client.patch(
+            f"/api/admin/providers/{provider['id']}/approval",
+            json={"action": "approve"},
+        )
+        self.assertEqual(approval.status_code, 200)
+        public_provider = next(
+            item for item in self.client.get("/api/providers").json
+            if item["id"] == provider["id"]
+        )
+        self.assertEqual(public_provider["contactEmail"], "taylor@example.com")
+        self.assertIsNone(public_provider["contactPhone"])
+
+        self.login_account("taylor@example.com")
+        listing = self.client.get("/")
+        self.assertIn(b'mailto:taylor@example.com', listing.data)
+        self.assertIn(b'taylor@example.com</a>', listing.data)
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b'name="contactEmail"', dashboard.data)
+        self.assertIn(b'value="taylor@example.com"', dashboard.data)
+
+    def test_registered_healthcare_provider_is_discoverable_and_joinable_outside_default_location(self):
+        response = self.client.post("/register", data={
+            "name": "Sam Provider",
+            "email": "sam@example.com",
+            "password": "another-long-password",
+            "confirm_password": "another-long-password",
+            "role": "provider",
+            "business_name": "Sample provider",
+            "category": "Healthcare",
+            "address": "44 Oak Road, Portland, OR",
+            "services": "Consultation, Follow-up",
+        })
+        self.assertEqual(response.status_code, 303)
+        provider = self.store.list("providers")[-1]
+        self.assertEqual(provider["name"], "Sample provider")
+        self.assertEqual(provider["category"], "Healthcare")
+        self.assertEqual(self.store.get("providers", str(provider["id"])), provider)
+        self.assertNotIn(
+            provider["id"],
+            [item["id"] for item in self.client.get("/api/providers").json],
+        )
+
+        self.login_admin()
+        approval = self.client.patch(
+            f"/api/admin/providers/{provider['id']}/approval",
+            json={"action": "approve"},
+        )
+        self.assertEqual(approval.status_code, 200)
+        public_provider = next(
+            item for item in self.client.get("/api/providers").json
+            if str(item["id"]) == str(provider["id"])
+        )
+        self.assertEqual(public_provider["name"], "Sample provider")
+        self.assertEqual(public_provider["category"], "Healthcare")
+
+        self.create_account("customer", "patient@example.com")
+        self.login_account("patient@example.com")
+        discovery = self.client.get("/")
+        self.assertEqual(discovery.status_code, 200)
+        self.assertIn(b'data-category="Healthcare"', discovery.data)
+        self.assertIn(b"Sample provider", discovery.data)
+        self.assertIn(b'id="location-input" aria-label="Location" placeholder="City, state, or ZIP" value=""', discovery.data)
+
+        joined = self.client.post("/api/queues", json={"providerId": provider["id"]})
+        self.assertEqual(joined.status_code, 201)
+        self.assertEqual(joined.json["queue"]["providerId"], provider["id"])
+        self.assertEqual(self.store.get("providers", str(provider["id"]))["people"], 1)
 
     def test_registration_validation_preserves_fields_and_uploaded_photo_for_retry(self):
         image_buffer = BytesIO()
@@ -169,6 +829,7 @@ class ApiTests(unittest.TestCase):
             "name": "Taylor Lee",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "provider",
             "business_name": "Taylor's Salon",
             "category": "Salon",
@@ -219,6 +880,7 @@ class ApiTests(unittest.TestCase):
             "name": "Alex Customer",
             "phone": "+1 (206) 555-0134",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
         })
         self.assertEqual(response.status_code, 303)
@@ -230,6 +892,7 @@ class ApiTests(unittest.TestCase):
             "name": "Another Customer",
             "phone": "+12065550134",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
         })
         self.assertEqual(duplicate.status_code, 409)
@@ -242,6 +905,7 @@ class ApiTests(unittest.TestCase):
             "email": "jamie@example.com",
             "phone": "+1 206 555 0134",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
         })
         self.assertEqual(response.status_code, 303)
@@ -257,6 +921,7 @@ class ApiTests(unittest.TestCase):
             "name": "Taylor Lee",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "provider",
             "business_name": "Taylor's Salon",
             "category": "Salon",
@@ -269,6 +934,8 @@ class ApiTests(unittest.TestCase):
         user = self.store.list("users")[0]
         provider = self.store.get("providers", str(user["providerId"]))
         self.assertEqual(provider["photoId"], user["photoId"])
+        provider["approvalStatus"] = "approved"
+        self.store.put("providers", str(provider["id"]), provider, provider)
         photo = self.client.get(f"/media/providers/{provider['photoId']}")
         self.assertEqual(photo.status_code, 200)
         self.assertEqual(photo.mimetype, "image/jpeg")
@@ -287,6 +954,7 @@ class ApiTests(unittest.TestCase):
             "name": "Jamie Rivera",
             "phone": "+12065550134",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
             "photo": (image_buffer, "profile.jpg", "image/jpeg"),
         }, content_type="multipart/form-data")
@@ -299,8 +967,9 @@ class ApiTests(unittest.TestCase):
     def test_registration_rejects_invalid_phone_and_non_image_upload(self):
         invalid_phone = self.client.post("/register", data={
             "name": "Jamie Rivera",
-            "phone": "206-555-0134",
+            "phone": "12345",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
         })
         self.assertEqual(invalid_phone.status_code, 400)
@@ -330,6 +999,7 @@ class ApiTests(unittest.TestCase):
             "name": "Taylor",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "customer",
         }
         self.assertEqual(self.client.post("/register", data=valid).status_code, 303)
@@ -343,6 +1013,7 @@ class ApiTests(unittest.TestCase):
             "name": "Taylor",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "provider",
         })
         self.assertEqual(response.status_code, 400)
@@ -354,6 +1025,7 @@ class ApiTests(unittest.TestCase):
             "name": "Taylor",
             "email": "taylor@example.com",
             "password": "another-long-password",
+            "confirm_password": "another-long-password",
             "role": "provider",
             "business_name": "Taylor's Salon",
             "category": "Salon",
@@ -374,7 +1046,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.store.get("providers", "1")["people"], 1)
 
         current = self.client.get("/api/queues/current")
-        self.assertEqual(current.json["id"], queue["id"])
+        self.assertEqual([item["id"] for item in current.json["queues"]], [queue["id"]])
         left = self.client.delete(f"/api/queues/{queue['id']}")
         self.assertEqual(left.status_code, 200)
         self.assertEqual(self.store.get("providers", "1")["people"], 0)
@@ -387,7 +1059,7 @@ class ApiTests(unittest.TestCase):
         rejected = self.client.post("/api/queues", json={"providerId": 1})
         self.assertEqual(rejected.status_code, 409)
 
-    def test_provider_status_controls_customer_join_and_switching_queues(self):
+    def test_provider_status_controls_customer_join_and_multiple_queues(self):
         first_provider = self.create_account("provider", "first-provider@example.com")
         second_provider = self.create_account("provider", "second-provider@example.com")
         self.create_account("customer", "queue-customer@example.com")
@@ -417,10 +1089,16 @@ class ApiTests(unittest.TestCase):
         self.login_account("queue-customer@example.com")
         first_join = self.client.post("/api/queues", json={"providerId": first_provider["providerId"]})
         self.assertEqual(first_join.status_code, 201)
-        self.assertIsNone(self.store.get("queues", second_queue_id))
-        self.assertEqual(self.store.get("providers", str(second_provider["providerId"]))["people"], 0)
+        # Joining another provider no longer leaves the earlier queue: the
+        # customer now waits in both at once.
+        self.assertIsNotNone(self.store.get("queues", second_queue_id))
+        self.assertEqual(self.store.get("providers", str(second_provider["providerId"]))["people"], 1)
         self.assertEqual(self.store.get("providers", provider_id)["people"], 1)
-        self.assertEqual(self.client.get("/api/queues/current").json["providerId"], first_provider["providerId"])
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(
+            {str(item["providerId"]) for item in current.json["queues"]},
+            {str(first_provider["providerId"]), str(second_provider["providerId"])},
+        )
 
     def test_call_next_serves_oldest_and_updates_provider(self):
         provider_user_id = str(uuid4())
@@ -473,8 +1151,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(joined.status_code, 201)
         current = self.client.get("/api/queues/current")
         self.assertEqual(current.status_code, 200)
-        self.assertEqual(current.json["position"], 1)
-        self.assertEqual(current.json["wait"], 0)
+        self.assertEqual(current.json["queues"][0]["position"], 1)
+        self.assertEqual(current.json["queues"][0]["wait"], 0)
         landing = self.client.get("/")
         self.assertIn(b"Favorites", landing.data)
         self.assertIn(b"aria-pressed=\"true\"", landing.data)
@@ -490,6 +1168,9 @@ class ApiTests(unittest.TestCase):
             "name": "Jamie Studio",
             "category": "Healthcare",
             "address": "500 Pine Street",
+            "description": "Thoughtful neighborhood care, with less waiting.",
+            "contactEmail": "contact@jamie.example",
+            "contactPhone": "98765 43210",
             "services": ["Consultation", "Follow-up"],
             "hours": "Mon-Fri 8 AM-5 PM",
             "serviceDuration": 25,
@@ -500,11 +1181,82 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(provider["serviceDuration"], 25)
         self.assertEqual(provider["services"], ["Consultation", "Follow-up"])
         self.assertEqual(provider["hours"], "Mon-Fri 8 AM-5 PM")
+        self.assertEqual(provider["description"], "Thoughtful neighborhood care, with less waiting.")
+        self.assertEqual(provider["contactEmail"], "contact@jamie.example")
+        self.assertEqual(provider["contactPhone"], "+919876543210")
+        public_provider = next(
+            item for item in self.client.get("/api/providers").json
+            if str(item["id"]) == provider_id
+        )
+        self.assertEqual(public_provider["contactEmail"], "contact@jamie.example")
+        self.assertEqual(public_provider["contactPhone"], "+919876543210")
+        listing = self.client.get("/")
+        self.assertIn(b'mailto:contact@jamie.example', listing.data)
+        self.assertIn(b'tel:+919876543210', listing.data)
+        self.assertIn(b"Thoughtful neighborhood care, with less waiting.", listing.data)
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b'name="description"', dashboard.data)
+        self.assertIn(b'Thoughtful neighborhood care, with less waiting.', dashboard.data)
         self.assertEqual(self.client.patch("/api/providers/1", json={"status": "Paused"}).status_code, 403)
         invalid = self.client.patch(f"/api/providers/{provider_id}", json={"serviceDuration": 181})
         self.assertEqual(invalid.status_code, 400)
         invalid_services = self.client.patch(f"/api/providers/{provider_id}", json={"services": [""]})
         self.assertEqual(invalid_services.status_code, 400)
+        invalid_email = self.client.patch(f"/api/providers/{provider_id}", json={"contactEmail": "bad-email"})
+        invalid_phone = self.client.patch(f"/api/providers/{provider_id}", json={"contactPhone": "555-0100"})
+        invalid_description = self.client.patch(f"/api/providers/{provider_id}", json={"description": "x" * 161})
+        self.assertEqual(invalid_email.status_code, 400)
+        self.assertEqual(invalid_phone.status_code, 400)
+        self.assertEqual(invalid_description.status_code, 400)
+
+    def test_provider_can_update_listing_photo_and_only_owner_can_upload(self):
+        owner = self.create_account("provider", "photo-owner@example.com")
+        other_owner = self.create_account("provider", "photo-other@example.com")
+        provider_id = str(owner["providerId"])
+        self.login_account("photo-owner@example.com")
+        page = self.client.get("/?view=provider")
+        self.assertIn(b'name="description"', page.data)
+        self.assertIn(b'id="provider-photo-form"', page.data)
+        self.assertIn(b'name="contactEmail"', page.data)
+        self.assertIn(b'name="contactPhone"', page.data)
+        self.assertIn(b'name="services"', page.data)
+        self.assertIn(b'name="hours"', page.data)
+        self.assertIn(b'name="serviceDuration"', page.data)
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (40, 30), color=(40, 100, 60)).save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        uploaded = self.client.post(
+            f"/api/providers/{provider_id}/photo",
+            data={"photo": (image_buffer, "business.png", "image/png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.get_data(as_text=True))
+        photo_id = uploaded.json["provider"]["photoId"]
+        photo_path = Path(self.app.config["DATA_DIR"]) / "provider_photos" / photo_id
+        self.assertTrue(photo_path.is_file())
+        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertIn(photo_id.encode(), self.client.get("/").data)
+
+        invalid = self.client.post(
+            f"/api/providers/{provider_id}/photo",
+            data={"photo": (BytesIO(b"not an image"), "business.png", "image/png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(self.store.get("providers", provider_id)["photoId"], photo_id)
+
+        self.login_account("photo-other@example.com")
+        image_buffer = BytesIO()
+        Image.new("RGB", (20, 20), color=(70, 90, 110)).save(image_buffer, format="JPEG")
+        image_buffer.seek(0)
+        forbidden = self.client.post(
+            f"/api/providers/{provider_id}/photo",
+            data={"photo": (image_buffer, "other.jpg", "image/jpeg")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(self.store.get("providers", provider_id)["photoId"], photo_id)
 
     def test_provider_cannot_manage_another_provider_or_queue(self):
         owner_one = self.create_account("provider", "one@example.com")
@@ -524,6 +1276,92 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(forbidden_queue.status_code, 403)
         self.assertNotEqual(owner_one["providerId"], owner_two["providerId"])
         self.assertEqual(self.store.get("queues", queue_id)["status"], "waiting")
+
+    def test_provider_adds_walkin_with_private_contact_and_owner_only_access(self):
+        owner = self.create_account("provider", "walkin-owner@example.com")
+        other_owner = self.create_account("provider", "walkin-other@example.com")
+        self.login_account("walkin-owner@example.com")
+        provider_id = str(owner["providerId"])
+
+        added = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Walk-in Visitor",
+            "email": "visitor@example.com",
+            "phone": "98765 43210",
+            "address": "7 Pine Street",
+            "service": "Cut",
+        })
+        self.assertEqual(added.status_code, 201)
+        queue = added.json["queue"]
+        self.assertEqual(queue["status"], "waiting")
+        self.assertEqual(queue["source"], "walk-in")
+        self.assertEqual(queue["email"], "visitor@example.com")
+        self.assertEqual(queue["phone"], "+919876543210")
+        self.assertEqual(queue["address"], "7 Pine Street")
+        self.assertEqual(queue["service"], "Cut")
+        self.assertEqual(self.store.get("queues", queue["id"])["customerName"], "Walk-in Visitor")
+        self.assertEqual(self.store.get("providers", provider_id)["people"], 1)
+
+        private_queues = self.client.get(f"/api/providers/{provider_id}/queues")
+        self.assertEqual(private_queues.status_code, 200)
+        self.assertEqual(private_queues.json["queues"][0]["customerPhone"], "+919876543210")
+        self.assertEqual(private_queues.json["queues"][0]["customerEmail"], "visitor@example.com")
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b"Walk-in Visitor", dashboard.data)
+        self.assertIn(b"visitor@example.com", dashboard.data)
+        self.assertIn(b"+919876543210", dashboard.data)
+        self.assertIn(b'data-queue-filter="completed"', dashboard.data)
+
+        public_providers = self.client.get("/api/providers")
+        self.assertNotIn(b"visitor@example.com", public_providers.data)
+        self.assertNotIn(b"+919876543210", public_providers.data)
+        discovery = self.client.get("/")
+        self.assertNotIn(b"visitor@example.com", discovery.data)
+        self.assertNotIn(b"+919876543210", discovery.data)
+
+        invalid = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Missing contact",
+            "service": "Cut",
+        })
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("email address", invalid.json["error"])
+        self.assertEqual(len(self.store.list("queues")), 1)
+
+        self.login_account("walkin-other@example.com")
+        forbidden_add = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Not authorized",
+            "phone": "+12065550198",
+            "service": "Cut",
+        })
+        forbidden_list = self.client.get(f"/api/providers/{provider_id}/queues")
+        self.assertEqual(forbidden_add.status_code, 403)
+        self.assertEqual(forbidden_list.status_code, 403)
+        self.assertEqual(
+            self.client.get(f"/api/providers/{provider_id}/queues?status=completed").status_code,
+            403,
+        )
+        self.assertEqual(len(self.store.list("queues")), 1)
+
+        self.login_account("walkin-owner@example.com")
+        started = self.client.post(f"/api/providers/{provider_id}/call-next")
+        self.assertEqual(started.status_code, 200)
+        self.assertEqual(self.store.get("queues", queue["id"])["status"], "serving")
+        completed = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue['id']}",
+            json={"action": "complete"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(self.store.get("queues", queue["id"])["status"], "completed")
+        self.assertEqual(self.store.get("providers", provider_id)["people"], 0)
+        completed_history = self.client.get(f"/api/providers/{provider_id}/queues?status=completed")
+        self.assertEqual(completed_history.status_code, 200)
+        self.assertEqual([entry["id"] for entry in completed_history.json["queues"]], [queue["id"]])
+        self.assertEqual(completed_history.json["queues"][0]["customerEmail"], "visitor@example.com")
+        self.assertTrue(completed_history.json["queues"][0]["completedAt"])
+        self.assertEqual(self.client.get(f"/api/providers/{provider_id}/queues").json["queues"], [])
+        self.assertEqual(
+            self.client.get(f"/api/providers/{provider_id}/queues?status=unknown").status_code,
+            400,
+        )
 
     def test_queue_service_transitions_reject_invalid_actions(self):
         provider_user = self.create_account("provider", "provider@example.com")
@@ -581,9 +1419,10 @@ class ApiTests(unittest.TestCase):
 
         self.login_account("second@example.com")
         current = self.client.get("/api/queues/current")
-        self.assertEqual(current.json["customerId"], second_customer["id"])
-        self.assertEqual(current.json["position"], 1)
-        self.assertEqual(current.json["wait"], 0)
+        self.assertEqual(len(current.json["queues"]), 1)
+        self.assertEqual(current.json["queues"][0]["customerId"], second_customer["id"])
+        self.assertEqual(current.json["queues"][0]["position"], 1)
+        self.assertEqual(current.json["queues"][0]["wait"], 0)
 
     def test_login_accepts_phone_and_bad_credentials_fail(self):
         self.create_account(identifier="+12065550134")
@@ -593,6 +1432,92 @@ class ApiTests(unittest.TestCase):
             "password": "not-the-password",
         })
         self.assertEqual(bad.status_code, 401)
+
+    def test_indian_phone_defaults_apply_to_registration_login_and_password_reset(self):
+        registered = self.client.post("/register", data={
+            "name": "Asha Customer",
+            "email": "asha@example.com",
+            "phone": "98765 43210",
+            "password": "a-long-test-password",
+            "confirm_password": "a-long-test-password",
+            "role": "customer",
+        })
+        self.assertEqual(registered.status_code, 303)
+        account = self.store.list("users")[0]
+        self.assertEqual(account["phone"], "+919876543210")
+
+        self.login_account("09876543210", password="a-long-test-password")
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+        self.client.post("/logout")
+        reset_page = self.client.get("/reset-password")
+        reset_token = re.search(rb'name="csrf-token" content="([^"]+)"', reset_page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = reset_token
+        reset = self.client.post("/reset-password", data={
+            "email": "asha@example.com",
+            "phone": "9876543210",
+            "password": "another-long-password",
+            "confirm_password": "another-long-password",
+        })
+        self.assertEqual(reset.status_code, 200)
+        self.assertTrue(check_password_hash(
+            self.store.get("users", account["id"])["passwordHash"],
+            "another-long-password",
+        ))
+        self.login_account("+91 98765 43210", password="another-long-password")
+
+    def test_password_reset_requires_matching_contacts_and_updates_password(self):
+        response = self.client.post("/register", data={
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "phone": "+1 206 555 0134",
+            "password": "old-long-password",
+            "confirm_password": "old-long-password",
+            "role": "customer",
+        })
+        self.assertEqual(response.status_code, 303)
+        record = self.store.get("users", self.store.list("users")[0]["id"])
+        old_hash = record["passwordHash"]
+
+        page = self.client.get("/reset-password")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Reset password", page.data)
+        self.assertIn(b"Account email", page.data)
+        self.assertIn(b"Account phone number", page.data)
+
+        mismatch = self.client.post("/reset-password", data={
+            "email": "jamie@example.com",
+            "phone": "+12065550135",
+            "password": "new-long-password",
+            "confirm_password": "new-long-password",
+        })
+        self.assertEqual(mismatch.status_code, 200)
+        self.assertIn(b"If those contact details match an account", mismatch.data)
+        self.assertEqual(self.store.get("users", record["id"])["passwordHash"], old_hash)
+
+        reset = self.client.post("/reset-password", data={
+            "email": "JAMIE@example.com",
+            "phone": "+1 (206) 555-0134",
+            "password": "new-long-password",
+            "confirm_password": "new-long-password",
+        })
+        self.assertEqual(reset.status_code, 200)
+        updated_record = self.store.get("users", record["id"])
+        self.assertNotEqual(updated_record["passwordHash"], old_hash)
+        self.assertTrue(check_password_hash(updated_record["passwordHash"], "new-long-password"))
+        self.assertNotIn("passwordHash", self.store.list("users")[0])
+        self.login_account("jamie@example.com", password="new-long-password")
+
+    def test_password_reset_rejects_mismatched_confirmation(self):
+        response = self.client.post("/reset-password", data={
+            "email": "jamie@example.com",
+            "phone": "+12065550134",
+            "password": "new-long-password",
+            "confirm_password": "another-long-password",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"The passwords do not match", response.data)
+        self.assertEqual(self.store.list("users"), [])
 
     def test_login_csrf_failure_renders_login_form_and_success_rotates_token(self):
         self.create_account()

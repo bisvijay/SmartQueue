@@ -22,6 +22,12 @@ class FileStore:
         with self._lock:
             yield
 
+    def lock_accounts(self, account_ids):
+        return None
+
+    def lock_providers(self, provider_ids):
+        return None
+
     def _collection_dir(self, collection):
         if not isinstance(collection, str) or not _SEGMENT.fullmatch(collection):
             raise ValueError("Invalid collection.")

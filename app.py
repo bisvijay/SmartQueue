@@ -1,18 +1,24 @@
 import io
 import json
+import logging
 import os
 import re
 import secrets
 import time
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+import qrcode
+from flask import Flask, abort, g, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
+from qrcode.image.svg import SvgPathImage
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from logging_config import configure_logging
+from postgres_store import PostgresStore
 from store import FileStore
 
 
@@ -46,13 +52,46 @@ def create_app(test_config=None):
         SEED_DIR=ROOT / "data" / "seed" / "providers",
         MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 64 * 1024,
         SECRET_KEY=os.environ.get("SMARTQUEUE_SECRET_KEY") or secrets.token_hex(32),
+        ADMIN_PASSWORD=os.environ.get("SMARTQUEUE_ADMIN_PASSWORD", ""),
+        DATABASE_URL=os.environ.get("SMARTQUEUE_DATABASE_URL", ""),
+        DATABASE_SSL_ROOT_CERT=os.environ.get("SMARTQUEUE_DB_SSL_ROOT_CERT", ""),
+        LOG_FILE=os.environ.get("SMARTQUEUE_LOG_FILE", ""),
     )
     if test_config:
         app.config.update(test_config)
-    store = FileStore(app.config["DATA_DIR"])
+    store = (
+        PostgresStore(app.config["DATABASE_URL"], app.config["DATABASE_SSL_ROOT_CERT"])
+        if app.config["DATABASE_URL"]
+        else FileStore(app.config["DATA_DIR"])
+    )
+    app.config["POSTGRES_ENABLED"] = isinstance(store, PostgresStore)
     app.extensions["smartqueue_store"] = store
+    log = configure_logging(app.config["DATA_DIR"], app.config.get("LOG_FILE") or None)
+    log.info(
+        "SmartQueue app created: store=%s",
+        "postgres" if app.config["POSTGRES_ENABLED"] else "json-file",
+    )
+
+    @app.before_request
+    def _log_request_start():
+        g.request_started = time.perf_counter()
+
+    @app.after_request
+    def _log_request_end(response):
+        started = getattr(g, "request_started", None)
+        if started is not None:
+            log.debug(
+                "request method=%s path=%s status=%s duration_ms=%.1f",
+                request.method,
+                request.path,
+                response.status_code,
+                (time.perf_counter() - started) * 1000,
+            )
+        return response
 
     def seed_providers():
+        if app.config["POSTGRES_ENABLED"]:
+            return
         if store.list("providers"):
             return
         for seed_file in sorted(Path(app.config["SEED_DIR"]).glob("*.json")):
@@ -82,12 +121,33 @@ def create_app(test_config=None):
             raise ApiError(403, f"A {role} account is required.")
         return user
 
+    def require_admin():
+        if not app.config["ADMIN_PASSWORD"] or session.get("admin_authenticated") is not True:
+            raise ApiError(403, "Administrator access is required.")
+
+    def provider_approval_status(provider):
+        # Existing listings predate moderation and remain visible; newly registered
+        # providers are explicitly marked pending.
+        return provider.get("approvalStatus", "approved")
+
+    def ensure_provider_approved(provider):
+        if provider_approval_status(provider) != "approved":
+            raise ApiError(403, "This provider is not approved to accept queue entries.")
+
     def require_owned_provider(provider_id):
         user = require_user("provider")
         provider = require_provider(provider_id)
         if str(provider.get("ownerId")) != user["id"]:
             raise ApiError(403, "You can only manage your own provider listing.")
         return user, provider
+
+    def provider_with_contact(provider):
+        provider = dict(provider)
+        owner_id = provider.get("ownerId")
+        owner = store.get("users", owner_id) if isinstance(owner_id, str) else None
+        provider["contactEmail"] = provider.get("contactEmail") or (owner.get("email") if owner else None)
+        provider["contactPhone"] = provider.get("contactPhone") or (owner.get("phone") if owner else None)
+        return provider
 
     def active_provider_queues(provider_id):
         return sorted(
@@ -105,11 +165,149 @@ def create_app(test_config=None):
         provider["wait"] = len(active) * max(1, int(provider.get("serviceDuration", 15)))
         return provider
 
+    def provider_queue_view(provider, entries=None):
+        if entries is None:
+            entries = active_provider_queues(provider["id"])
+        service_duration = max(1, int(provider.get("serviceDuration", 15)))
+        serving_count = sum(entry.get("status") == "serving" for entry in entries)
+        waiting_ahead = 0
+        visible_entries = []
+        for entry in entries:
+            customer_id = entry.get("customerId")
+            customer = store.get("users", customer_id) if isinstance(customer_id, str) else None
+            visible = {
+                **entry,
+                "customerName": customer.get("name", "Customer") if customer else entry.get("customerName", "Customer"),
+                "customerEmail": customer.get("email") if customer else entry.get("email"),
+                "customerPhone": customer.get("phone") if customer else entry.get("phone"),
+                "customerAddress": entry.get("address"),
+                "customerService": entry.get("service"),
+            }
+            if entry.get("status") == "serving":
+                visible["estimatedWait"] = 0
+            elif entry.get("status") == "waiting":
+                visible["estimatedWait"] = service_duration * (waiting_ahead + serving_count)
+                waiting_ahead += 1
+            visible_entries.append(visible)
+        return visible_entries
+
+    def resolve_service_selection(provider, requested):
+        """Resolve a customer's service selection against the provider's list.
+
+        Accepts a list of names (or a single name). Unknown names are dropped
+        and duplicates removed; when nothing valid remains, the provider's
+        first service is the default, or "General service" when the provider
+        lists none. Returns one comma-joined string for the queue record.
+        """
+        services = provider.get("services") or []
+        if isinstance(requested, str):
+            requested = [requested]
+        selected = []
+        if isinstance(requested, (list, tuple)):
+            for item in requested:
+                if isinstance(item, str) and item.strip() in services and item.strip() not in selected:
+                    selected.append(item.strip())
+        if not selected:
+            selected = [services[0] if services else "General service"]
+        return ", ".join(selected)
+
+    def create_walk_in_entry(provider, body):
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be an object.")
+        if set(body) - {"name", "email", "phone", "address", "service", "services"}:
+            raise ApiError(400, "Only walk-in customer details can be submitted.")
+        store.lock_providers([provider["id"]])
+        provider = require_provider(str(provider["id"]))
+        ensure_provider_approved(provider)
+        if provider.get("status") != "Open":
+            raise ApiError(409, "This provider is not accepting customers right now.")
+
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ApiError(400, "Enter a customer name (up to 100 characters).")
+        email_input = body.get("email", "")
+        phone_input = body.get("phone", "")
+        if not isinstance(email_input, str) or not isinstance(phone_input, str):
+            raise ApiError(400, "Enter a valid email address or phone number.")
+        email = normalized_email(email_input.strip()) if email_input.strip() else None
+        phone = normalized_phone(phone_input.strip()) if phone_input.strip() else None
+        if email_input.strip() and not email:
+            raise ApiError(400, "Enter a valid email address.")
+        if phone_input.strip() and not phone:
+            raise ApiError(400, "Enter a valid international phone number, including the + country code.")
+        if not email and not phone:
+            raise ApiError(400, "Enter an email address, a phone number, or both.")
+
+        address = body.get("address", "")
+        if not isinstance(address, str) or len(address.strip()) > 200:
+            raise ApiError(400, "Address must be no longer than 200 characters.")
+        requested = body.get("services")
+        if requested is None:
+            requested = body.get("service")
+        service = resolve_service_selection(provider, requested)
+
+        active_queues = active_provider_queues(provider["id"])
+        service_duration = max(1, int(provider.get("serviceDuration", 15)))
+        entry = {
+            "id": str(uuid.uuid4()),
+            "customerId": None,
+            "providerId": provider["id"],
+            "customerName": name.strip(),
+            "email": email,
+            "phone": phone,
+            "address": address.strip(),
+            "service": service.strip(),
+            "source": "walk-in",
+            "peopleAhead": len(active_queues),
+            "wait": len(active_queues) * service_duration,
+            "status": "waiting",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        store.create("queues", entry["id"], entry, entry)
+        log.info(
+            "queue.walk_in queue=%s provider=%s service=%s",
+            entry["id"],
+            provider["id"],
+            entry["service"],
+        )
+        refresh_provider_metrics(provider)
+        store.put("providers", str(provider["id"]), provider, provider)
+        return entry
+
     def parse_services(value):
         services = [item.strip() for item in value.split(",") if item.strip()]
         if len(services) > 20 or any(len(service) > 60 for service in services):
             return None
         return services
+
+    def normalized_email(value):
+        if not isinstance(value, str) or not value:
+            return None
+        _, parsed_email = parseaddr(value)
+        if (
+            len(value) > 254
+            or parsed_email != value
+            or "@" not in value
+            or "." not in value.rsplit("@", 1)[-1]
+        ):
+            return None
+        return value.casefold()
+
+    def normalized_phone(value):
+        if not isinstance(value, str) or not value:
+            return None
+        if not PHONE_INPUT.fullmatch(value) or value.count("+") > 1:
+            return None
+        digits = re.sub(r"\D", "", value)
+        if value.startswith("+"):
+            phone = "+" + digits
+        elif len(digits) == 10:
+            phone = "+91" + digits
+        elif len(digits) == 11 and digits.startswith("0"):
+            phone = "+91" + digits[1:]
+        else:
+            return None
+        return phone if PHONE_E164.fullmatch(phone) else None
 
     def csrf_token():
         token = session.get("csrf_token")
@@ -146,7 +344,11 @@ def create_app(test_config=None):
 
     @app.context_processor
     def inject_template_state():
-        return {"current_user": current_user(), "csrf_token": csrf_token}
+        return {
+            "current_user": current_user(),
+            "csrf_token": csrf_token,
+            "admin_authenticated": bool(app.config["ADMIN_PASSWORD"] and session.get("admin_authenticated") is True),
+        }
 
     def render_registration(form=None, errors=None, created=False, status=200, photo_staged=False):
         return (
@@ -228,7 +430,20 @@ def create_app(test_config=None):
 
     @app.errorhandler(ApiError)
     def handle_api_error(error):
+        log.log(
+            logging.WARNING if error.status >= 500 else logging.INFO,
+            "api error status=%s method=%s path=%s message=%s",
+            error.status,
+            request.method,
+            request.path,
+            error,
+        )
         return jsonify(error=str(error)), error.status
+
+    @app.errorhandler(500)
+    def handle_unexpected_error(error):
+        log.error("unhandled error method=%s path=%s", request.method, request.path, exc_info=error)
+        return jsonify(error="Something went wrong. Please try again."), 500
 
     @app.errorhandler(413)
     def request_too_large(_error):
@@ -243,32 +458,41 @@ def create_app(test_config=None):
 
     @app.get("/")
     def home():
-        providers = store.list("providers")
-        queue = None
+        all_providers = [provider_with_contact(provider) for provider in store.list("providers")]
+        providers = [
+            provider for provider in all_providers
+            if provider_approval_status(provider) == "approved"
+        ]
+        my_queues = []
         user = current_user()
         if user and user.get("role") == "customer":
-            queue = next(
-                (
-                    entry
-                    for entry in store.list("queues")
-                    if entry.get("customerId") == user["id"]
-                    and entry.get("status") in {"waiting", "serving"}
-                ),
-                None,
-            )
+            providers_by_id = {str(provider["id"]): provider for provider in all_providers}
+            for entry in store.list("queues"):
+                if entry.get("customerId") != user["id"] or entry.get("status") not in {"waiting", "serving"}:
+                    continue
+                provider_for_queue = providers_by_id.get(str(entry["providerId"]))
+                if not provider_for_queue:
+                    continue
+                active = active_provider_queues(entry["providerId"])
+                position = next((index for index, item in enumerate(active) if item["id"] == entry["id"]), None)
+                duration = max(1, int(provider_for_queue.get("serviceDuration", 15)))
+                wait = duration * max(0, position or 0)
+                my_queues.append({
+                    "queue": {**entry, "wait": wait},
+                    "provider": provider_for_queue,
+                    "position": "Now" if entry.get("status") == "serving" else ((position + 1) if position is not None else "—"),
+                    "wait": wait,
+                })
+            my_queues.sort(key=lambda item: item["queue"].get("createdAt", ""))
+        joined_ids = {str(item["queue"]["providerId"]) for item in my_queues}
         view = request.args.get("view", "customer")
-        customer_position = None
-        customer_wait = 0
-        if queue:
-            active = active_provider_queues(queue["providerId"])
-            position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
-            provider_for_queue = store.get("providers", str(queue["providerId"]))
-            duration = max(1, int(provider_for_queue.get("serviceDuration", 15)))
-            customer_position = "Now" if queue.get("status") == "serving" else ((position + 1) if position is not None else "—")
-            customer_wait = duration * max(0, position or 0)
-            queue = {**queue, "wait": customer_wait}
         if view not in {"customer", "provider", "admin"}:
             view = "customer"
+        if view == "admin":
+            if not app.config["ADMIN_PASSWORD"]:
+                return render_template("admin_login.html", error="Admin access is not configured. Set SMARTQUEUE_ADMIN_PASSWORD and restart the app."), 503
+            if session.get("admin_authenticated") is not True:
+                return redirect(url_for("admin_login"))
         provider = None
         provider_queue = []
         if view == "provider":
@@ -282,33 +506,25 @@ def create_app(test_config=None):
             if not provider or str(provider.get("ownerId")) != user["id"]:
                 session.clear()
                 return redirect(url_for("login"))
-            provider_queue = active_provider_queues(provider["id"])
-            service_duration = max(1, int(provider.get("serviceDuration", 15)))
+            provider = provider_with_contact(provider)
+            provider["approvalStatus"] = provider_approval_status(provider)
+            provider_queue = provider_queue_view(provider)
             service_in_progress = any(entry.get("status") == "serving" for entry in provider_queue)
-            waiting_ahead = 0
-            for entry in provider_queue:
-                customer_id = entry.get("customerId")
-                customer = store.get("users", customer_id) if isinstance(customer_id, str) else None
-                entry["customerName"] = customer.get("name", "Customer") if customer else "Customer"
-                if entry["status"] == "serving":
-                    entry["estimatedWait"] = 0
-                else:
-                    entry["estimatedWait"] = (
-                        service_duration * (waiting_ahead + sum(item.get("status") == "serving" for item in provider_queue))
-                    )
-                    waiting_ahead += 1
             provider = refresh_provider_metrics(provider)
+        if view == "admin":
+            for item in all_providers:
+                item["approvalStatus"] = provider_approval_status(item)
         return render_template(
             "index.html",
             providers=providers,
-            queue=queue,
+            my_queues=my_queues,
+            joined_ids=joined_ids,
             view=view,
             provider=provider,
             provider_queue=provider_queue,
             service_in_progress=service_in_progress if view == "provider" else False,
+            admin_providers=all_providers if view == "admin" else [],
             provider_categories=PROVIDER_CATEGORIES,
-            customer_position=customer_position,
-            customer_wait=customer_wait,
             favorite_ids={str(item) for item in user.get("favoriteProviderIds", [])} if user and user.get("role") == "customer" else set(),
         )
 
@@ -317,10 +533,8 @@ def create_app(test_config=None):
         if request.method == "GET":
             return render_template("login.html", error=None)
         identifier = request.form.get("identifier", "").strip()
-        email_identifier = identifier.lower()
-        phone_identifier = ""
-        if identifier.startswith("+") and PHONE_INPUT.fullmatch(identifier):
-            phone_identifier = "+" + re.sub(r"\D", "", identifier)
+        email_identifier = identifier.casefold()
+        phone_identifier = normalized_phone(identifier) or ""
         user = next(
             (item for item in store.list("users")
              if (email_identifier and (item.get("email") or "").casefold() == email_identifier)
@@ -329,17 +543,96 @@ def create_app(test_config=None):
         )
         record = store.get("users", user["id"]) if user else None
         if not record or not check_password_hash(record.get("passwordHash", ""), request.form.get("password", "")):
+            log.info("auth.login_failed")
             return render_template("login.html", error="Email/phone or password is incorrect."), 401
         session.clear()
         session["user_id"] = record["id"]
+        log.info("auth.login user=%s role=%s", record["id"], record["role"])
         session["csrf_token"] = secrets.token_urlsafe(32)
         destination = url_for("home", view="provider") if record["role"] == "provider" else url_for("home")
         return redirect(destination, code=303)
+
+    @app.route("/reset-password", methods=["GET", "POST"])
+    def reset_password():
+        if request.method == "GET":
+            return render_template("reset_password.html", error=None, success=False)
+
+        email = request.form.get("email", "").strip()
+        phone_input = request.form.get("phone", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if not normalized_email(email):
+            return render_template(
+                "reset_password.html",
+                error="Enter a valid email address.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        phone = normalized_phone(phone_input)
+        if not phone:
+            return render_template(
+                "reset_password.html",
+                error="Enter a valid international phone number, including the + country code.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        if len(password) < 10 or len(password) > 128:
+            return render_template(
+                "reset_password.html",
+                error="Use a password between 10 and 128 characters.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+        if password != confirm_password:
+            return render_template(
+                "reset_password.html",
+                error="The passwords do not match.",
+                success=False,
+                form={"email": email, "phone": phone_input},
+            ), 400
+
+        with store.transaction():
+            account_index = next(
+                (
+                    account for account in store.list("users")
+                    if (account.get("email") or "").casefold() == email.casefold()
+                    and account.get("phone") == phone
+                ),
+                None,
+            )
+            if account_index:
+                account = store.get("users", account_index["id"])
+                if account:
+                    account["passwordHash"] = generate_password_hash(password)
+                    public_account = {
+                        key: value for key, value in account.items()
+                        if key != "passwordHash"
+                    }
+                    store.put("users", account["id"], account, public_account)
+
+        return render_template("reset_password.html", error=None, success=True)
 
     @app.post("/logout")
     def logout():
         session.clear()
         return redirect(url_for("home"), code=303)
+
+    @app.route("/admin/login", methods=["GET", "POST"])
+    def admin_login():
+        if not app.config["ADMIN_PASSWORD"]:
+            return render_template(
+                "admin_login.html",
+                error="Admin access is not configured. Set SMARTQUEUE_ADMIN_PASSWORD and restart the app.",
+            ), 503
+        if request.method == "GET":
+            return render_template("admin_login.html", error=None)
+        supplied = request.form.get("password", "")
+        if not secrets.compare_digest(supplied, app.config["ADMIN_PASSWORD"]):
+            return render_template("admin_login.html", error="Administrator password is incorrect."), 401
+        session.clear()
+        session["admin_authenticated"] = True
+        session["csrf_token"] = secrets.token_urlsafe(32)
+        return redirect(url_for("home", view="admin"), code=303)
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
@@ -361,35 +654,24 @@ def create_app(test_config=None):
             "services": request.form.get("services", "").strip(),
         }
         password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
         errors = {}
-        normalized_phone = ""
+        normalized_phone_value = ""
         if form["email"]:
-            _, parsed_email = parseaddr(form["email"])
-            if (
-                len(form["email"]) > 254
-                or parsed_email != form["email"]
-                or "@" not in form["email"]
-                or "." not in form["email"].rsplit("@", 1)[-1]
-            ):
+            if not normalized_email(form["email"]):
                 errors["email"] = "Enter a valid email address."
         if form["phone"]:
-            phone_input = form["phone"].strip()
-            if (
-                not PHONE_INPUT.fullmatch(phone_input)
-                or not phone_input.startswith("+")
-                or phone_input.count("+") != 1
-            ):
+            normalized_phone_value = normalized_phone(form["phone"])
+            if not normalized_phone_value:
                 errors["phone"] = "Enter a valid international phone number, including the + country code."
-            else:
-                normalized_phone = "+" + re.sub(r"\D", "", phone_input)
-                if not PHONE_E164.fullmatch(normalized_phone):
-                    errors["phone"] = "Enter a valid international phone number, including the + country code."
         if not form["email"] and not form["phone"]:
             errors["contact"] = "Enter an email address, a phone number, or both."
         if not form["name"] or len(form["name"]) > 100:
             errors["name"] = "Enter your name (up to 100 characters)."
         if len(password) < 10 or len(password) > 128:
             errors["password"] = "Use a password between 10 and 128 characters."
+        if password != confirm_password:
+            errors["confirm_password"] = "The passwords do not match."
         if form["role"] not in {"customer", "provider"}:
             errors["role"] = "Choose a customer or provider account."
         services = parse_services(form["services"])
@@ -427,7 +709,7 @@ def create_app(test_config=None):
                 for user in users
             ):
                 errors["email"] = "An account with this email already exists."
-            if normalized_phone and any(user.get("phone") == normalized_phone for user in users):
+            if normalized_phone_value and any(user.get("phone") == normalized_phone_value for user in users):
                 errors["phone"] = "An account with this phone number already exists."
             if errors:
                 return render_registration(form, errors, status=409, photo_staged=staged_photo_path is not None)
@@ -437,7 +719,7 @@ def create_app(test_config=None):
                 "id": user_id,
                 "name": form["name"],
                 "email": form["email"] or None,
-                "phone": normalized_phone or None,
+                "phone": normalized_phone_value or None,
                 "role": form["role"],
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
@@ -446,7 +728,11 @@ def create_app(test_config=None):
 
             if form["role"] == "provider":
                 providers = store.list("providers")
-                provider_id = str(max((int(item["id"]) for item in providers), default=0) + 1)
+                provider_id = (
+                    str(uuid.uuid4())
+                    if app.config["POSTGRES_ENABLED"]
+                    else str(max((int(item["id"]) for item in providers), default=0) + 1)
+                )
                 accent, icon = PROVIDER_CATEGORIES[form["category"]]
                 provider = {
                     "id": int(provider_id),
@@ -466,6 +752,10 @@ def create_app(test_config=None):
                     "accent": accent,
                     "icon": icon,
                     "services": services,
+                    "contactEmail": form["email"] or None,
+                    "contactPhone": normalized_phone_value or None,
+                    "approvalStatus": "pending",
+                    "approvalNote": "",
                 }
                 if photo_id:
                     provider["photoId"] = photo_id
@@ -498,6 +788,7 @@ def create_app(test_config=None):
                 if photo_written:
                     photo_path.unlink(missing_ok=True)
                 raise RuntimeError("Could not create the account record.")
+            log.info("auth.registered user=%s role=%s", user_id, form["role"])
             if provider is not None:
                 provider_id = str(provider["id"])
                 try:
@@ -519,32 +810,103 @@ def create_app(test_config=None):
 
     @app.get("/api/providers")
     def list_providers():
-        return jsonify(store.list("providers"))
+        return jsonify([
+            provider_with_contact(provider)
+            for provider in store.list("providers")
+            if provider_approval_status(provider) == "approved"
+        ])
+
+    @app.get("/providers/<provider_id>/qr.svg")
+    def provider_qr(provider_id):
+        provider = require_provider(provider_id)
+        ensure_provider_approved(provider)
+        target_url = url_for("public_walk_in", provider_id=provider["id"], _external=True)
+        qr = qrcode.QRCode(box_size=8, border=2)
+        qr.add_data(target_url)
+        qr.make(fit=True)
+        image = qr.make_image(image_factory=SvgPathImage)
+        output = BytesIO()
+        image.save(output)
+        response = make_response(output.getvalue())
+        response.headers["Content-Type"] = "image/svg+xml"
+        response.headers["Cache-Control"] = "public, max-age=3600"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @app.route("/providers/<provider_id>/walk-in", methods=["GET", "POST"])
+    def public_walk_in(provider_id):
+        provider = require_provider(provider_id)
+        ensure_provider_approved(provider)
+        if request.method == "GET":
+            return render_template(
+                "walk_in.html",
+                provider=provider,
+                success=request.args.get("joined") == "1",
+                error=None,
+            )
+        try:
+            with store.transaction():
+                provider = require_provider(provider_id)
+                body = request.form.to_dict()
+                body.pop("csrf_token", None)
+                selected_services = request.form.getlist("services")
+                if selected_services:
+                    body["services"] = selected_services
+                create_walk_in_entry(provider, body)
+        except ApiError as error:
+            return render_template(
+                "walk_in.html",
+                provider=provider,
+                success=False,
+                error=str(error),
+            ), error.status
+        return redirect(url_for("public_walk_in", provider_id=provider_id, joined="1"), code=303)
+
+    @app.get("/api/providers/<provider_id>/queues")
+    def list_provider_queues(provider_id):
+        _, provider = require_owned_provider(provider_id)
+        queue_status = request.args.get("status", "active")
+        if queue_status == "active":
+            entries = active_provider_queues(provider_id)
+        elif queue_status == "completed":
+            entries = sorted(
+                (
+                    entry for entry in store.list("queues")
+                    if str(entry.get("providerId")) == str(provider_id)
+                    and entry.get("status") == "completed"
+                ),
+                key=lambda entry: entry.get("completedAt", ""),
+                reverse=True,
+            )
+        else:
+            raise ApiError(400, "Choose active or completed services.")
+        return jsonify(queues=provider_queue_view(provider, entries))
 
     @app.get("/api/queues/current")
     def current_queue():
         user = require_user("customer")
-        queue = next(
-            (
-                entry
-                for entry in store.list("queues")
-                if entry.get("customerId") == user["id"]
-                and entry.get("status") in {"waiting", "serving"}
-            ),
-            None,
-        )
-        if queue:
+        queues = [
+            entry
+            for entry in store.list("queues")
+            if entry.get("customerId") == user["id"]
+            and entry.get("status") in {"waiting", "serving"}
+        ]
+        queues.sort(key=lambda entry: entry.get("createdAt", ""))
+        enriched = []
+        for queue in queues:
             active = active_provider_queues(queue["providerId"])
             position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
-            provider = require_provider(str(queue["providerId"]))
+            provider = store.get("providers", str(queue["providerId"]))
+            if provider is None:
+                continue
             duration = max(1, int(provider.get("serviceDuration", 15)))
-            queue = {
+            enriched.append({
                 **queue,
                 "peopleAhead": max(0, (position or 0) - (1 if queue.get("status") == "serving" else 0)),
                 "wait": duration * max(0, position or 0),
                 "position": "Now" if queue.get("status") == "serving" else (position + 1 if position is not None else None),
-            }
-        return jsonify(queue)
+            })
+        return jsonify(queues=enriched)
 
     @app.post("/api/queues")
     def join_queue():
@@ -558,28 +920,26 @@ def create_app(test_config=None):
         provider_id = str(provider_id)
 
         with store.transaction():
+            store.lock_accounts([user["id"]])
+            store.lock_providers([provider_id])
             provider = require_provider(provider_id)
+            ensure_provider_approved(provider)
             if provider.get("status") != "Open":
                 raise ApiError(409, "This provider is not accepting customers right now.")
-            queues = store.list("queues")
+            # A customer may wait at several providers at once; only a second
+            # active visit at the SAME provider is treated as already joined.
             existing = next(
                 (
                     entry
-                    for entry in queues
+                    for entry in store.list("queues")
                     if entry.get("customerId") == user["id"]
+                    and str(entry.get("providerId")) == provider_id
                     and entry.get("status") in {"waiting", "serving"}
                 ),
                 None,
             )
-            if existing and str(existing["providerId"]) == provider_id:
-                return jsonify(queue=existing, providers=store.list("providers")), 200
             if existing:
-                if existing.get("status") == "serving":
-                    raise ApiError(409, "You cannot leave while a provider is serving you.")
-                previous = require_provider(str(existing["providerId"]))
-                store.delete("queues", existing["id"])
-                refresh_provider_metrics(previous)
-                store.put("providers", str(previous["id"]), previous, previous)
+                return jsonify(queue=existing, providers=store.list("providers")), 200
 
             active_queues = active_provider_queues(provider_id)
             service_duration = max(1, int(provider.get("serviceDuration", 15)))
@@ -587,12 +947,22 @@ def create_app(test_config=None):
                 "id": str(uuid.uuid4()),
                 "customerId": user["id"],
                 "providerId": provider["id"],
+                "service": resolve_service_selection(provider, body.get("services")),
                 "peopleAhead": len(active_queues),
                 "wait": len(active_queues) * service_duration,
                 "status": "waiting",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
-            store.create("queues", queue["id"], queue, queue)
+            if not store.create("queues", queue["id"], queue, queue):
+                log.warning("queue.join_conflict customer=%s provider=%s", user["id"], provider["id"])
+                raise ApiError(409, "We couldn't add you to this queue. Refresh and try again.")
+            log.info(
+                "queue.join queue=%s customer=%s provider=%s service=%s",
+                queue["id"],
+                user["id"],
+                provider["id"],
+                queue["service"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers")), 201
@@ -603,6 +973,15 @@ def create_app(test_config=None):
         if not CLIENT_ID.fullmatch(queue_id):
             raise ApiError(400, "A valid queue ID is required.")
         with store.transaction():
+            store.lock_accounts([user["id"]])
+            queue = store.get("queues", queue_id)
+            if (
+                not queue
+                or queue.get("customerId") != user["id"]
+                or queue.get("status") != "waiting"
+            ):
+                raise ApiError(404, "Active queue entry not found.")
+            store.lock_providers([queue["providerId"]])
             queue = store.get("queues", queue_id)
             if (
                 not queue
@@ -612,6 +991,12 @@ def create_app(test_config=None):
                 raise ApiError(404, "Active queue entry not found.")
             provider = require_provider(str(queue["providerId"]))
             store.delete("queues", queue_id)
+            log.info(
+                "queue.leave queue=%s customer=%s provider=%s",
+                queue_id,
+                user["id"],
+                queue["providerId"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(providers=store.list("providers"))
@@ -619,7 +1004,9 @@ def create_app(test_config=None):
     @app.post("/api/providers/<provider_id>/call-next")
     def call_next(provider_id):
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
+            ensure_provider_approved(provider)
             if any(queue.get("status") == "serving" for queue in active_provider_queues(provider_id)):
                 raise ApiError(409, "Complete the current service before starting another.")
             waiting = [entry for entry in active_provider_queues(provider_id) if entry.get("status") == "waiting"]
@@ -629,34 +1016,152 @@ def create_app(test_config=None):
             entry["status"] = "serving"
             entry["startedAt"] = datetime.now(timezone.utc).isoformat()
             store.put("queues", entry["id"], entry, entry)
+            log.info("queue.call_next queue=%s provider=%s", entry["id"], provider["id"])
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=entry, providers=store.list("providers"))
+
+    @app.post("/api/providers/<provider_id>/walk-ins")
+    def add_walk_in(provider_id):
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be a JSON object.")
+        with store.transaction():
+            _, provider = require_owned_provider(provider_id)
+            entry = create_walk_in_entry(provider, body)
+            return jsonify(queue=entry, providers=store.list("providers")), 201
+
+    @app.patch("/api/admin/providers/<provider_id>/approval")
+    def update_provider_approval(provider_id):
+        require_admin()
+        body = request.get_json(silent=True)
+        if (
+            not isinstance(body, dict)
+            or body.get("action") not in {"approve", "reject"}
+            or set(body) - {"action", "note"}
+        ):
+            raise ApiError(400, "Choose approve or reject and provide an optional review note.")
+        note = body.get("note", "")
+        if not isinstance(note, str) or len(note.strip()) > 500:
+            raise ApiError(400, "Review notes must be 500 characters or fewer.")
+        with store.transaction():
+            store.lock_providers([provider_id])
+            provider = require_provider(provider_id)
+            provider["approvalStatus"] = "approved" if body["action"] == "approve" else "rejected"
+            provider["approvalNote"] = note.strip()
+            provider["approvalUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+            if body["action"] == "reject":
+                provider["status"] = "Paused"
+            store.put("providers", str(provider["id"]), provider, provider)
+            event = {
+                "id": str(uuid.uuid4()),
+                "providerId": provider["id"],
+                "decision": provider["approvalStatus"],
+                "note": provider["approvalNote"],
+                "createdAt": provider["approvalUpdatedAt"],
+            }
+            store.create("provider_reviews", event["id"], event, event)
+            log.info("provider.approval provider=%s decision=%s", provider["id"], provider["approvalStatus"])
+            return jsonify(provider=provider)
+
+    @app.post("/api/providers/<provider_id>/request-review")
+    def request_provider_review(provider_id):
+        with store.transaction():
+            store.lock_providers([provider_id])
+            _, provider = require_owned_provider(provider_id)
+            if provider_approval_status(provider) != "rejected":
+                raise ApiError(409, "Only rejected provider listings can request another review.")
+            provider["approvalStatus"] = "pending"
+            provider["approvalUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+            store.put("providers", str(provider["id"]), provider, provider)
+            event = {
+                "id": str(uuid.uuid4()),
+                "providerId": provider["id"],
+                "decision": "resubmitted",
+                "note": provider.get("approvalNote", ""),
+                "createdAt": provider["approvalUpdatedAt"],
+            }
+            store.create("provider_reviews", event["id"], event, event)
+            return jsonify(provider=provider)
+
+    @app.post("/api/providers/<provider_id>/photo")
+    def update_provider_photo(provider_id):
+        image_contents, image_error = process_photo(request.files.get("photo"))
+        if image_error:
+            raise ApiError(400, image_error)
+        if not image_contents:
+            raise ApiError(400, "Choose a JPEG, PNG, or WebP listing photo.")
+        with store.transaction():
+            store.lock_providers([provider_id])
+            _, provider = require_owned_provider(provider_id)
+            photo_id = f"{uuid.uuid4().hex}.jpg"
+            photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
+            photo_path.parent.mkdir(parents=True, exist_ok=True)
+            photo_path.write_bytes(image_contents)
+            previous_photo_id = provider.get("photoId")
+            provider["photoId"] = photo_id
+            try:
+                store.put("providers", str(provider["id"]), provider, provider)
+            except OSError:
+                photo_path.unlink(missing_ok=True)
+                raise
+            if isinstance(previous_photo_id, str) and re.fullmatch(r"[a-f0-9]{32}\.jpg", previous_photo_id):
+                previous_photo = Path(app.config["DATA_DIR"]) / "provider_photos" / previous_photo_id
+                if previous_photo != photo_path:
+                    previous_photo.unlink(missing_ok=True)
+            return jsonify(provider=provider)
 
     @app.patch("/api/providers/<provider_id>")
     def update_provider(provider_id):
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise ApiError(400, "Request body must be a JSON object.")
-        allowed = {"status", "name", "category", "address", "services", "hours", "serviceDuration"}
+        allowed = {
+            "status", "name", "category", "address", "description", "services", "hours",
+            "serviceDuration", "contactEmail", "contactPhone",
+        }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             if "status" in body:
                 if not isinstance(body["status"], str) or body["status"] not in {"Open", "Paused"}:
                     raise ApiError(400, "Status must be Open or Paused.")
+                if body["status"] == "Open":
+                    ensure_provider_approved(provider)
                 provider["status"] = body["status"]
             for key, limit in (("name", 120), ("address", 200), ("hours", 100)):
                 if key in body:
                     if not isinstance(body[key], str) or not body[key].strip() or len(body[key].strip()) > limit:
                         raise ApiError(400, f"{key} must contain 1 to {limit} characters.")
                     provider[key] = body[key].strip()
+            if "description" in body:
+                description = body["description"]
+                if not isinstance(description, str) or len(description.strip()) > 160:
+                    raise ApiError(400, "Tagline must be no more than 160 characters.")
+                provider["description"] = description.strip()
             if "category" in body:
                 if not isinstance(body["category"], str) or body["category"] not in PROVIDER_CATEGORIES:
                     raise ApiError(400, "Choose a valid business category.")
                 provider["category"] = body["category"]
                 provider["accent"], provider["icon"] = PROVIDER_CATEGORIES[body["category"]]
+            if "contactEmail" in body:
+                contact_email = body["contactEmail"]
+                if not isinstance(contact_email, str):
+                    raise ApiError(400, "Business email must be a valid email address.")
+                contact_email = contact_email.strip()
+                if contact_email and not normalized_email(contact_email):
+                    raise ApiError(400, "Business email must be a valid email address.")
+                provider["contactEmail"] = contact_email.casefold() or None
+            if "contactPhone" in body:
+                contact_phone = body["contactPhone"]
+                if not isinstance(contact_phone, str):
+                    raise ApiError(400, "Business phone must be a valid international phone number.")
+                contact_phone = contact_phone.strip()
+                if contact_phone and not normalized_phone(contact_phone):
+                    raise ApiError(400, "Business phone must be a valid international phone number.")
+                provider["contactPhone"] = normalized_phone(contact_phone) if contact_phone else None
             if "services" in body:
                 services = body["services"]
                 if (
@@ -674,6 +1179,7 @@ def create_app(test_config=None):
                 provider["serviceDuration"] = duration
                 refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
+            log.info("provider.update provider=%s fields=%s", provider["id"], ",".join(sorted(body)))
             return jsonify(providers=store.list("providers"))
 
     @app.patch("/api/providers/<provider_id>/queues/<queue_id>")
@@ -688,11 +1194,13 @@ def create_app(test_config=None):
         if not CLIENT_ID.fullmatch(queue_id):
             raise ApiError(400, "A valid queue ID is required.")
         with store.transaction():
+            store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             queue = store.get("queues", queue_id)
             if not queue or str(queue.get("providerId")) != provider_id:
                 raise ApiError(404, "Queue entry not found.")
             if body["action"] == "serve":
+                ensure_provider_approved(provider)
                 if queue.get("status") != "waiting":
                     raise ApiError(409, "Only waiting customers can be started.")
                 if any(entry.get("status") == "serving" for entry in active_provider_queues(provider_id)):
@@ -705,6 +1213,12 @@ def create_app(test_config=None):
                 queue["status"] = "completed"
                 queue["completedAt"] = datetime.now(timezone.utc).isoformat()
             store.put("queues", queue["id"], queue, queue)
+            log.info(
+                "queue.%s queue=%s provider=%s",
+                body["action"],
+                queue["id"],
+                provider["id"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers"))

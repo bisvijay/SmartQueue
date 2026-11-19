@@ -6,7 +6,10 @@
     <meta name="theme-color" content="#f6f7f4" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
     <title>Log in — SmartQueue</title>
+    <script>try{var t=window.localStorage.getItem("smartqueue.theme");if(t&&t!=="classic")document.documentElement.dataset.theme=t;}catch(e){}</script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='theme.js') }}"></script>
   </head>
   <body>
     <div class="app-shell registration-shell">
@@ -31,7 +34,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <div class="registration-field">
               <label for="identifier">Email address or phone number</label>
-              <input id="identifier" name="identifier" autocomplete="username" required autofocus placeholder="you@example.com or +1 206 555 0134" />
+              <input id="identifier" name="identifier" autocomplete="username" required autofocus placeholder="you@example.com or 98765 43210" />
             </div>
             <div class="registration-field">
               <label for="password">Password</label>
@@ -39,6 +42,7 @@
             </div>
             <button class="button button-dark registration-submit" type="submit">Log in <span aria-hidden="true">→</span></button>
           </form>
+          <p class="login-register-link"><a href="{{ url_for('reset_password') }}">Reset password</a></p>
           <p class="login-register-link">New to SmartQueue? <a href="{{ url_for('register') }}">Create an account</a></p>
         </section>
       </main>
