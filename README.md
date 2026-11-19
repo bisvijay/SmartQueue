@@ -203,8 +203,8 @@ CREATE INDEX queue_visits_provider_status_idx
 CREATE INDEX queue_visits_customer_history_idx
     ON queue_visits (customer_account_id, joined_at DESC)
     WHERE customer_account_id IS NOT NULL;
-CREATE UNIQUE INDEX queue_one_active_visit_per_customer
-    ON queue_visits (customer_account_id)
+CREATE UNIQUE INDEX queue_one_active_visit_per_customer_provider
+    ON queue_visits (customer_account_id, provider_id)
     WHERE customer_account_id IS NOT NULL
       AND status IN ('waiting', 'serving');
 CREATE UNIQUE INDEX queue_one_serving_visit_per_provider

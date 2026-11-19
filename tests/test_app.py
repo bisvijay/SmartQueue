@@ -537,6 +537,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(filtered.status_code, 201)
         self.assertEqual(filtered.json["queue"]["service"], "Color")
 
+    def test_customer_can_join_multiple_queues_and_leave_one(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        first = self.client.post("/api/queues", json={"providerId": 1, "services": ["Haircut"]})
+        second = self.client.post("/api/queues", json={"providerId": 3})
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(self.store.get("providers", "1")["people"], 1)
+        self.assertEqual(self.store.get("providers", "3")["people"], 1)
+
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(len(current.json["queues"]), 2)
+
+        landing = self.client.get("/")
+        self.assertEqual(landing.data.count(b"Leave queue"), 2)
+        self.assertIn(b"Willow &amp; Sage", landing.data)
+        self.assertIn(b"Little Bird Coffee", landing.data)
+        self.assertIn(b"Haircut", landing.data)
+
+        left = self.client.delete(f"/api/queues/{first.json['queue']['id']}")
+        self.assertEqual(left.status_code, 200)
+        self.assertIsNone(self.store.get("queues", first.json["queue"]["id"]))
+        self.assertIsNotNone(self.store.get("queues", second.json["queue"]["id"]))
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(
+            [item["providerId"] for item in current.json["queues"]],
+            [second.json["queue"]["providerId"]],
+        )
+
+    def test_provider_dashboard_shows_booked_services_and_view_options(self):
+        provider_user = self.create_account("provider", "view-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "view-customer@example.com")
+        self.login_account("view-customer@example.com")
+        joined = self.client.post("/api/queues", json={
+            "providerId": provider_id,
+            "services": ["Color", "Cut"],
+        })
+        self.assertEqual(joined.status_code, 201)
+
+        self.login_account("view-owner@example.com")
+        queues = self.client.get(f"/api/providers/{provider_id}/queues")
+        self.assertEqual(queues.json["queues"][0]["customerService"], "Color, Cut")
+        dashboard = self.client.get("/?view=provider")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"heading-service", dashboard.data)
+        self.assertIn(b'class="service-pill"', dashboard.data)
+        self.assertIn(b"queue-service-filter", dashboard.data)
+        self.assertIn(b"data-view-toggle", dashboard.data)
+
     def test_public_walk_in_multiple_services_and_default(self):
         provider_user = self.create_account("provider", "multi-walkin-owner@example.com")
         provider_id = str(provider_user["providerId"])
@@ -917,7 +967,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.store.get("providers", "1")["people"], 1)
 
         current = self.client.get("/api/queues/current")
-        self.assertEqual(current.json["id"], queue["id"])
+        self.assertEqual([item["id"] for item in current.json["queues"]], [queue["id"]])
         left = self.client.delete(f"/api/queues/{queue['id']}")
         self.assertEqual(left.status_code, 200)
         self.assertEqual(self.store.get("providers", "1")["people"], 0)
@@ -930,7 +980,7 @@ class ApiTests(unittest.TestCase):
         rejected = self.client.post("/api/queues", json={"providerId": 1})
         self.assertEqual(rejected.status_code, 409)
 
-    def test_provider_status_controls_customer_join_and_switching_queues(self):
+    def test_provider_status_controls_customer_join_and_multiple_queues(self):
         first_provider = self.create_account("provider", "first-provider@example.com")
         second_provider = self.create_account("provider", "second-provider@example.com")
         self.create_account("customer", "queue-customer@example.com")
@@ -960,10 +1010,16 @@ class ApiTests(unittest.TestCase):
         self.login_account("queue-customer@example.com")
         first_join = self.client.post("/api/queues", json={"providerId": first_provider["providerId"]})
         self.assertEqual(first_join.status_code, 201)
-        self.assertIsNone(self.store.get("queues", second_queue_id))
-        self.assertEqual(self.store.get("providers", str(second_provider["providerId"]))["people"], 0)
+        # Joining another provider no longer leaves the earlier queue: the
+        # customer now waits in both at once.
+        self.assertIsNotNone(self.store.get("queues", second_queue_id))
+        self.assertEqual(self.store.get("providers", str(second_provider["providerId"]))["people"], 1)
         self.assertEqual(self.store.get("providers", provider_id)["people"], 1)
-        self.assertEqual(self.client.get("/api/queues/current").json["providerId"], first_provider["providerId"])
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(
+            {str(item["providerId"]) for item in current.json["queues"]},
+            {str(first_provider["providerId"]), str(second_provider["providerId"])},
+        )
 
     def test_call_next_serves_oldest_and_updates_provider(self):
         provider_user_id = str(uuid4())
@@ -1016,8 +1072,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(joined.status_code, 201)
         current = self.client.get("/api/queues/current")
         self.assertEqual(current.status_code, 200)
-        self.assertEqual(current.json["position"], 1)
-        self.assertEqual(current.json["wait"], 0)
+        self.assertEqual(current.json["queues"][0]["position"], 1)
+        self.assertEqual(current.json["queues"][0]["wait"], 0)
         landing = self.client.get("/")
         self.assertIn(b"Favorites", landing.data)
         self.assertIn(b"aria-pressed=\"true\"", landing.data)
@@ -1284,9 +1340,10 @@ class ApiTests(unittest.TestCase):
 
         self.login_account("second@example.com")
         current = self.client.get("/api/queues/current")
-        self.assertEqual(current.json["customerId"], second_customer["id"])
-        self.assertEqual(current.json["position"], 1)
-        self.assertEqual(current.json["wait"], 0)
+        self.assertEqual(len(current.json["queues"]), 1)
+        self.assertEqual(current.json["queues"][0]["customerId"], second_customer["id"])
+        self.assertEqual(current.json["queues"][0]["position"], 1)
+        self.assertEqual(current.json["queues"][0]["wait"], 0)
 
     def test_login_accepts_phone_and_bad_credentials_fail(self):
         self.create_account(identifier="+12065550134")

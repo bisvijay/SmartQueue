@@ -38,8 +38,8 @@
             <button class="nav-link {% if view == 'provider' %}active{% endif %}" data-view="provider">For providers</button>
           </nav>
           <div class="header-actions">
-            {% if queue and view == 'customer' %}
-            <a class="queue-shortcut" href="#my-queue"><span class="queue-dot"></span>My queue</a>
+            {% if my_queues and view == 'customer' %}
+            <a class="queue-shortcut" href="#my-queue"><span class="queue-dot"></span>My queues</a>
             {% endif %}
             {% if current_user or admin_authenticated %}
             <form action="{{ url_for('logout') }}" method="post" class="logout-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><button class="nav-link" type="submit">Sign out</button></form>
@@ -109,24 +109,27 @@
             <span class="results-location">Showing places near <strong id="location-label">all locations</strong></span>
           </div>
 
-          {% if queue %}
-          {% set joined = providers|selectattr('id', 'equalto', queue.providerId)|first %}
-          {% if joined %}
-          <section class="my-queue panel" id="my-queue" aria-live="polite">
+          {% if my_queues %}
+          <div id="my-queue">
+          {% for item in my_queues %}
+          {% set queue = item.queue %}
+          {% set joined = item.provider %}
+          <section class="my-queue panel" aria-live="polite" data-queue-panel data-queue-id="{{ queue.id }}" data-queue-status="{{ queue.status }}">
             <div class="queue-panel-left">
               <div class="queue-panel-icon" aria-hidden="true">✓</div>
-              <div><p class="eyebrow" id="queue-state">{% if queue.status == 'serving' %}YOU’RE BEING SERVED{% else %}YOU’RE ON THE LIST{% endif %}</p><h2>{{ joined.name }}</h2><p class="queue-panel-address">{{ joined.address }}</p></div>
+              <div><p class="eyebrow queue-state">{% if queue.status == 'serving' %}YOU’RE BEING SERVED{% else %}YOU’RE ON THE LIST{% endif %}</p><h2>{{ joined.name }}</h2><p class="queue-panel-address">{{ joined.address }}</p>{% if queue.service %}<p class="queue-panel-service">Service: {{ queue.service }}</p>{% endif %}</div>
             </div>
             <div class="queue-panel-stats">
-              <div><span class="queue-number" id="queue-position">{{ customer_position }}</span><span class="queue-label">Your place</span></div>
-              <div><span class="queue-number">~<span id="queue-wait">{{ customer_wait }}</span> <small>min</small></span><span class="queue-label">Estimated wait</span></div>
+              <div><span class="queue-number queue-position">{{ item.position }}</span><span class="queue-label">Your place</span></div>
+              <div><span class="queue-number">~<span class="queue-wait">{{ item.wait }}</span> <small>min</small></span><span class="queue-label">Estimated wait</span></div>
             </div>
             <div class="queue-panel-action">
               <p><span class="status-dot"></span> We’ll keep your place here</p>
-              {% if queue.status == 'waiting' %}<button class="text-button" data-queue-id="{{ queue.id }}" id="leave-queue">Leave queue</button>{% endif %}
+              {% if queue.status == 'waiting' %}<button class="text-button leave-queue" data-queue-id="{{ queue.id }}">Leave queue</button>{% endif %}
             </div>
           </section>
-          {% endif %}
+          {% endfor %}
+          </div>
           {% endif %}
 
           <div class="results-heading">
@@ -171,9 +174,9 @@
                     <button class="favorite-button {% if provider.id|string in favorite_ids %}is-favorite{% endif %}" data-provider-id="{{ provider.id }}" data-provider-name="{{ provider.name }}" aria-label="{% if provider.id|string in favorite_ids %}Remove {{ provider.name }} from favorites{% else %}Add {{ provider.name }} to favorites{% endif %}" aria-pressed="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">♥</button>
                     {% endif %}
                     {% if current_user and current_user.role == 'customer' %}
-                    <button class="button {% if queue and queue.providerId == provider.id %}button-joined{% else %}button-dark{% endif %} join-queue"
-                      data-provider-id="{{ provider.id }}" {% if provider.status != 'Open' and (not queue or queue.providerId != provider.id) %}disabled{% endif %}>
-                      {% if queue and queue.providerId == provider.id %}You’re in line ✓{% elif provider.status == 'Open' %}Join queue <span aria-hidden="true">↗</span>{% else %}Queue paused{% endif %}
+                    <button class="button {% if provider.id|string in joined_ids %}button-joined{% else %}button-dark{% endif %} join-queue"
+                      data-provider-id="{{ provider.id }}" {% if provider.status != 'Open' and provider.id|string not in joined_ids %}disabled{% endif %}>
+                      {% if provider.id|string in joined_ids %}You’re in line ✓{% elif provider.status == 'Open' %}Join queue <span aria-hidden="true">↗</span>{% else %}Queue paused{% endif %}
                     </button>
                     {% elif not current_user %}
                     <a class="button button-dark" href="{{ url_for('login') }}">Log in to join</a>
@@ -249,11 +252,24 @@
               <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
               <button class="queue-filter" type="button" data-queue-filter="completed" aria-pressed="false">Completed services</button>
             </div>
-            <div class="queue-table-heading"><span>CUSTOMER</span><span>WAIT</span><span>STATUS / ACTION</span></div>
+            <div class="queue-view-options">
+              <label class="view-filter-label">Filter by service
+                <select id="queue-service-filter">
+                  <option value="all">All services</option>
+                  {% for service in provider.services %}<option value="{{ service }}">{{ service }}</option>{% endfor %}
+                </select>
+              </label>
+              <span class="view-options-label">View options</span>
+              <label class="view-toggle"><input type="checkbox" data-view-toggle="service" checked /> Service</label>
+              <label class="view-toggle"><input type="checkbox" data-view-toggle="contact" checked /> Contact</label>
+              <label class="view-toggle"><input type="checkbox" data-view-toggle="wait" checked /> Wait</label>
+            </div>
+            <div class="queue-table-heading"><span class="heading-customer">CUSTOMER</span><span class="heading-service">SERVICE</span><span class="heading-wait">WAIT</span><span class="heading-action">STATUS / ACTION</span></div>
             <div id="queue-rows" aria-live="polite" data-service-duration="{{ provider.serviceDuration|default(15) }}">
               {% for entry in provider_queue %}
               <div class="queue-table-row" data-queue-id="{{ entry.id }}">
-                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small class="customer-contact">{% if entry.customerPhone %}{{ entry.customerPhone }}{% endif %}{% if entry.customerPhone and entry.customerEmail %} · {% endif %}{% if entry.customerEmail %}{{ entry.customerEmail }}{% endif %}{% if entry.customerAddress %} · {{ entry.customerAddress }}{% endif %}{% if entry.customerService %} · {{ entry.customerService }}{% endif %}{% if not entry.customerPhone and not entry.customerEmail and not entry.customerAddress and not entry.customerService %}{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}{% endif %}</small></span></div>
+                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small class="customer-contact">{% if entry.customerPhone %}{{ entry.customerPhone }}{% endif %}{% if entry.customerPhone and entry.customerEmail %} · {% endif %}{% if entry.customerEmail %}{{ entry.customerEmail }}{% endif %}{% if entry.customerAddress %} · {{ entry.customerAddress }}{% endif %}{% if not entry.customerPhone and not entry.customerEmail and not entry.customerAddress and not entry.customerService %}{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}{% endif %}</small></span></div>
+                <span class="service-cell">{% if entry.customerService %}{% for name in entry.customerService.split(', ') %}<span class="service-pill">{{ name }}</span>{% endfor %}{% else %}—{% endif %}</span>
                 <span class="wait-cell">{% if entry.status == 'serving' %}Now{% else %}~{{ entry.estimatedWait }} min{% endif %}</span>
                 <span class="queue-row-action">
                   {% if entry.status == 'serving' %}

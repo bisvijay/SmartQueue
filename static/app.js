@@ -182,17 +182,16 @@
       openServicePicker(button, card, services);
     }));
 
-    document.querySelector("#leave-queue")?.addEventListener("click", async (event) => {
-      const queueId = event.currentTarget.dataset.queueId;
+    document.querySelectorAll(".leave-queue").forEach((button) => button.addEventListener("click", async () => {
       try {
-        await api(`/api/queues/${encodeURIComponent(queueId)}`, {
+        await api(`/api/queues/${encodeURIComponent(button.dataset.queueId)}`, {
           method: "DELETE",
         });
         window.location.reload();
       } catch (error) {
         showError(error.message);
       }
-    });
+    }));
 
     document.querySelectorAll(".favorite-button").forEach((button) => button.addEventListener("click", async () => {
       const adding = button.getAttribute("aria-pressed") !== "true";
@@ -213,25 +212,30 @@
       }
     }));
 
-    if (document.querySelector("#queue-position")) {
-      const refreshQueue = async () => {
+    const queuePanels = [...document.querySelectorAll("[data-queue-panel]")];
+    if (queuePanels.length) {
+      const refreshQueues = async () => {
         try {
           const current = await api("/api/queues/current");
-          if (!current) {
+          const queues = current.queues || [];
+          if (queues.length !== queuePanels.length) {
             window.location.reload();
             return;
           }
-          document.querySelector("#queue-position").textContent = current.position;
-          document.querySelector("#queue-wait").textContent = current.wait;
-          if (current.status === "serving") {
-            document.querySelector("#queue-state").textContent = "YOU’RE BEING SERVED";
-            document.querySelector("#leave-queue")?.remove();
+          for (const panel of queuePanels) {
+            const entry = queues.find((item) => item.id === panel.dataset.queueId);
+            if (!entry || entry.status !== panel.dataset.queueStatus) {
+              window.location.reload();
+              return;
+            }
+            panel.querySelector(".queue-position").textContent = entry.position;
+            panel.querySelector(".queue-wait").textContent = entry.wait;
           }
         } catch (error) {
           showError(error.message);
         }
       };
-      window.setInterval(refreshQueue, 15000);
+      window.setInterval(refreshQueues, 15000);
     }
   }
 
@@ -247,8 +251,9 @@
     const waitMetric = document.querySelector("#provider-wait-metric");
     const serviceDuration = Number(providerPage.dataset.serviceDuration) || 15;
     const presentationButton = document.querySelector("#toggle-presentation");
-    const queueFilterHeading = document.querySelector(".queue-table-heading span:nth-child(2)");
+    const queueFilterHeading = document.querySelector(".heading-wait");
     let activeQueueFilter = "active";
+    let activeServiceFilter = "all";
     presentationButton.addEventListener("click", () => {
       const expanded = presentationButton.getAttribute("aria-expanded") !== "true";
       providerPage.classList.toggle("presentation-expanded", expanded);
@@ -269,7 +274,10 @@
       queueRows.replaceChildren();
       const showingCompleted = filter === "completed";
       const serving = queues.some((entry) => entry.status === "serving");
+      let visibleCount = 0;
       for (const [index, entry] of queues.entries()) {
+        if (activeServiceFilter !== "all" && !(entry.customerService || "").split(", ").includes(activeServiceFilter)) continue;
+        visibleCount += 1;
         const row = document.createElement("div");
         row.className = "queue-table-row";
         row.dataset.queueId = entry.id;
@@ -278,11 +286,20 @@
         appendText(customer, "span", `customer-avatar avatar-${index % 5 + 1}`, (entry.customerName || "Customer").slice(0, 2).toUpperCase());
         const customerText = document.createElement("span");
         appendText(customerText, "strong", "", entry.customerName || "Customer");
-        const details = [entry.customerPhone, entry.customerEmail, entry.customerAddress, entry.customerService].filter(Boolean).join(" · ")
+        const details = [entry.customerPhone, entry.customerEmail, entry.customerAddress].filter(Boolean).join(" · ")
           || (entry.status === "serving" ? "Service in progress" : "Customer");
         appendText(customerText, "small", "customer-contact", details);
         customer.append(customerText);
         row.append(customer);
+        const serviceCell = document.createElement("span");
+        serviceCell.className = "service-cell";
+        const serviceNames = (entry.customerService || "").split(", ").filter(Boolean);
+        if (serviceNames.length) {
+          for (const name of serviceNames) appendText(serviceCell, "span", "service-pill", name);
+        } else {
+          serviceCell.textContent = "—";
+        }
+        row.append(serviceCell);
         appendText(row, "span", "wait-cell", showingCompleted ? formatCompletedAt(entry.completedAt) : entry.status === "serving" ? "Now" : `~${entry.estimatedWait} min`);
         const action = document.createElement("span");
         action.className = "queue-row-action";
@@ -305,8 +322,10 @@
         row.append(action);
         queueRows.append(row);
       }
-      noWaiting.textContent = showingCompleted ? "No completed services yet." : "No one waiting. Enjoy the breather.";
-      noWaiting.hidden = queues.length !== 0;
+      noWaiting.textContent = queues.length !== 0 && visibleCount === 0
+        ? "No customers for this service."
+        : showingCompleted ? "No completed services yet." : "No one waiting. Enjoy the breather.";
+      noWaiting.hidden = visibleCount !== 0;
       queueCount.textContent = queues.length;
       const countLabel = queueCount.parentElement;
       countLabel.replaceChildren(queueCount);
@@ -353,6 +372,52 @@
         await refreshProviderQueue();
       });
     });
+
+    const liveQueueCard = document.querySelector(".live-queue-card");
+    const serviceFilterSelect = document.querySelector("#queue-service-filter");
+    const viewStorageKey = "smartqueue.providerView";
+    let savedView = {};
+    try {
+      savedView = JSON.parse(window.localStorage.getItem(viewStorageKey) || "{}");
+    } catch (error) {
+      savedView = {};
+    }
+    function persistView() {
+      const columns = {};
+      document.querySelectorAll("[data-view-toggle]").forEach((toggle) => {
+        columns[toggle.dataset.viewToggle] = toggle.checked;
+      });
+      try {
+        window.localStorage.setItem(viewStorageKey, JSON.stringify({ columns, serviceFilter: activeServiceFilter }));
+      } catch (error) {
+        /* storage unavailable; view options still apply to this page */
+      }
+    }
+    function applyViewToggles() {
+      document.querySelectorAll("[data-view-toggle]").forEach((toggle) => {
+        liveQueueCard.classList.toggle(`hide-${toggle.dataset.viewToggle}`, !toggle.checked);
+      });
+      persistView();
+    }
+    document.querySelectorAll("[data-view-toggle]").forEach((toggle) => {
+      if (savedView.columns && toggle.dataset.viewToggle in savedView.columns) {
+        toggle.checked = Boolean(savedView.columns[toggle.dataset.viewToggle]);
+      }
+      toggle.addEventListener("change", applyViewToggles);
+    });
+    if (serviceFilterSelect) {
+      if (savedView.serviceFilter && [...serviceFilterSelect.options].some((option) => option.value === savedView.serviceFilter)) {
+        activeServiceFilter = savedView.serviceFilter;
+        serviceFilterSelect.value = activeServiceFilter;
+      }
+      serviceFilterSelect.addEventListener("change", async () => {
+        activeServiceFilter = serviceFilterSelect.value;
+        persistView();
+        await refreshProviderQueue();
+      });
+    }
+    applyViewToggles();
+    if (activeServiceFilter !== "all") refreshProviderQueue();
 
     document.querySelector("#call-next").addEventListener("click", async () => {
       try {

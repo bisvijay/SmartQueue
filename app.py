@@ -419,29 +419,29 @@ def create_app(test_config=None):
             provider for provider in all_providers
             if provider_approval_status(provider) == "approved"
         ]
-        queue = None
+        my_queues = []
         user = current_user()
         if user and user.get("role") == "customer":
-            queue = next(
-                (
-                    entry
-                    for entry in store.list("queues")
-                    if entry.get("customerId") == user["id"]
-                    and entry.get("status") in {"waiting", "serving"}
-                ),
-                None,
-            )
+            providers_by_id = {str(provider["id"]): provider for provider in all_providers}
+            for entry in store.list("queues"):
+                if entry.get("customerId") != user["id"] or entry.get("status") not in {"waiting", "serving"}:
+                    continue
+                provider_for_queue = providers_by_id.get(str(entry["providerId"]))
+                if not provider_for_queue:
+                    continue
+                active = active_provider_queues(entry["providerId"])
+                position = next((index for index, item in enumerate(active) if item["id"] == entry["id"]), None)
+                duration = max(1, int(provider_for_queue.get("serviceDuration", 15)))
+                wait = duration * max(0, position or 0)
+                my_queues.append({
+                    "queue": {**entry, "wait": wait},
+                    "provider": provider_for_queue,
+                    "position": "Now" if entry.get("status") == "serving" else ((position + 1) if position is not None else "—"),
+                    "wait": wait,
+                })
+            my_queues.sort(key=lambda item: item["queue"].get("createdAt", ""))
+        joined_ids = {str(item["queue"]["providerId"]) for item in my_queues}
         view = request.args.get("view", "customer")
-        customer_position = None
-        customer_wait = 0
-        if queue:
-            active = active_provider_queues(queue["providerId"])
-            position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
-            provider_for_queue = store.get("providers", str(queue["providerId"]))
-            duration = max(1, int(provider_for_queue.get("serviceDuration", 15)))
-            customer_position = "Now" if queue.get("status") == "serving" else ((position + 1) if position is not None else "—")
-            customer_wait = duration * max(0, position or 0)
-            queue = {**queue, "wait": customer_wait}
         if view not in {"customer", "provider", "admin"}:
             view = "customer"
         if view == "admin":
@@ -473,15 +473,14 @@ def create_app(test_config=None):
         return render_template(
             "index.html",
             providers=providers,
-            queue=queue,
+            my_queues=my_queues,
+            joined_ids=joined_ids,
             view=view,
             provider=provider,
             provider_queue=provider_queue,
             service_in_progress=service_in_progress if view == "provider" else False,
             admin_providers=all_providers if view == "admin" else [],
             provider_categories=PROVIDER_CATEGORIES,
-            customer_position=customer_position,
-            customer_wait=customer_wait,
             favorite_ids={str(item) for item in user.get("favoriteProviderIds", [])} if user and user.get("role") == "customer" else set(),
         )
 
@@ -839,27 +838,26 @@ def create_app(test_config=None):
     @app.get("/api/queues/current")
     def current_queue():
         user = require_user("customer")
-        queue = next(
-            (
-                entry
-                for entry in store.list("queues")
-                if entry.get("customerId") == user["id"]
-                and entry.get("status") in {"waiting", "serving"}
-            ),
-            None,
-        )
-        if queue:
+        queues = [
+            entry
+            for entry in store.list("queues")
+            if entry.get("customerId") == user["id"]
+            and entry.get("status") in {"waiting", "serving"}
+        ]
+        queues.sort(key=lambda entry: entry.get("createdAt", ""))
+        enriched = []
+        for queue in queues:
             active = active_provider_queues(queue["providerId"])
             position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
             provider = require_provider(str(queue["providerId"]))
             duration = max(1, int(provider.get("serviceDuration", 15)))
-            queue = {
+            enriched.append({
                 **queue,
                 "peopleAhead": max(0, (position or 0) - (1 if queue.get("status") == "serving" else 0)),
                 "wait": duration * max(0, position or 0),
                 "position": "Now" if queue.get("status") == "serving" else (position + 1 if position is not None else None),
-            }
-        return jsonify(queue)
+            })
+        return jsonify(queues=enriched)
 
     @app.post("/api/queues")
     def join_queue():
@@ -874,43 +872,25 @@ def create_app(test_config=None):
 
         with store.transaction():
             store.lock_accounts([user["id"]])
-            queues = store.list("queues")
-            existing = next(
-                (
-                    entry
-                    for entry in queues
-                    if entry.get("customerId") == user["id"]
-                    and entry.get("status") in {"waiting", "serving"}
-                ),
-                None,
-            )
-            provider_ids = [provider_id]
-            if existing:
-                provider_ids.append(str(existing["providerId"]))
-            store.lock_providers(provider_ids)
+            store.lock_providers([provider_id])
             provider = require_provider(provider_id)
             ensure_provider_approved(provider)
             if provider.get("status") != "Open":
                 raise ApiError(409, "This provider is not accepting customers right now.")
-            queues = store.list("queues")
+            # A customer may wait at several providers at once; only a second
+            # active visit at the SAME provider is treated as already joined.
             existing = next(
                 (
                     entry
-                    for entry in queues
+                    for entry in store.list("queues")
                     if entry.get("customerId") == user["id"]
+                    and str(entry.get("providerId")) == provider_id
                     and entry.get("status") in {"waiting", "serving"}
                 ),
                 None,
             )
-            if existing and str(existing["providerId"]) == provider_id:
-                return jsonify(queue=existing, providers=store.list("providers")), 200
             if existing:
-                if existing.get("status") == "serving":
-                    raise ApiError(409, "You cannot leave while a provider is serving you.")
-                previous = require_provider(str(existing["providerId"]))
-                store.delete("queues", existing["id"])
-                refresh_provider_metrics(previous)
-                store.put("providers", str(previous["id"]), previous, previous)
+                return jsonify(queue=existing, providers=store.list("providers")), 200
 
             active_queues = active_provider_queues(provider_id)
             service_duration = max(1, int(provider.get("serviceDuration", 15)))

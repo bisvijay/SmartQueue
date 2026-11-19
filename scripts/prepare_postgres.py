@@ -10,7 +10,7 @@ from postgres_store import PostgresStore, _uuid
 from store import FileStore
 
 
-MIGRATION = ROOT / "migrations" / "001_postgres_app_compat.sql"
+MIGRATIONS = sorted((ROOT / "migrations").glob("*.sql"))
 
 
 def collection_count(connection, table):
@@ -107,10 +107,11 @@ def main():
 
     store = PostgresStore(dsn, os.environ.get("SMARTQUEUE_DB_SSL_ROOT_CERT"))
     with store.transaction():
-        migration_sql = MIGRATION.read_text(encoding="utf-8")
-        for statement in migration_sql.split(";"):
-            if statement.strip():
-                store._local.connection.execute(statement)
+        for migration_path in MIGRATIONS:
+            migration_sql = migration_path.read_text(encoding="utf-8")
+            for statement in migration_sql.split(";"):
+                if statement.strip():
+                    store._local.connection.execute(statement)
     print("Postgres compatibility migration applied.")
 
     if args.import_json:

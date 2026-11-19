@@ -18,6 +18,7 @@
     "How it works": "यह कैसे काम करता है",
     "For providers": "प्रदाताओं के लिए",
     "My queue": "मेरी कतार",
+    "My queues": "मेरी कतारें",
     "Sign out": "साइन आउट",
     "Sign up": "साइन अप",
     "Log in": "लॉग इन",
@@ -144,6 +145,12 @@
     "In queue": "कतार में",
     "Completed services": "पूरी हुई सेवाएँ",
     "CUSTOMER": "ग्राहक",
+    "SERVICE": "सेवा",
+    "Filter by service": "सेवा के अनुसार फ़िल्टर करें",
+    "View options": "दृश्य विकल्प",
+    "Contact": "संपर्क",
+    "Wait": "प्रतीक्षा",
+    "No customers for this service.": "इस सेवा के लिए कोई ग्राहक नहीं है।",
     "WAIT": "प्रतीक्षा",
     "STATUS / ACTION": "स्थिति / कार्रवाई",
     "No one waiting. Enjoy the breather.": "कोई प्रतीक्षा नहीं कर रहा। आराम कीजिए।",
@@ -325,6 +332,7 @@
     [/^Join (.+)’s queue — SmartQueue$/, "$1 की कतार में शामिल हों — SmartQueue"],
     [/^Join (.+)’s queue\.$/, "$1 की कतार में शामिल हों।"],
     [/^Nothing picked\? We’ll book “(.+)”\.$/, "कुछ नहीं चुना? हम “$1” बुक करेंगे।"],
+    [/^Service: (.+)$/, "सेवा: $1"],
     [/^If you pick none, (.+) will be booked\.$/, "यदि आप कुछ नहीं चुनते, तो $1 बुक होगी।"],
   ];
 
