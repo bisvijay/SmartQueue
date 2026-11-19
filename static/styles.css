@@ -527,3 +527,6 @@ h1, h2, h3, p { margin-top: 0; }
   .account-type-options { grid-template-columns: 1fr; }
   .account-type-card { min-height: 58px; }
 }
+
+.language-picker-wrap { display: inline-flex; align-items: center; }
+.language-picker { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; cursor: pointer; }
