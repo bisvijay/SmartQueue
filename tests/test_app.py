@@ -566,6 +566,27 @@ class ApiTests(unittest.TestCase):
             [second.json["queue"]["providerId"]],
         )
 
+    def test_queue_events_and_errors_are_logged(self):
+        self.create_account()
+        self.login_account("jamie@example.com")
+        with self.assertLogs("smartqueue", level="INFO") as captured:
+            joined = self.client.post("/api/queues", json={"providerId": 1, "services": ["Haircut"]})
+            self.assertEqual(joined.status_code, 201)
+            left = self.client.delete(f"/api/queues/{joined.json['queue']['id']}")
+            self.assertEqual(left.status_code, 200)
+            rejected = self.client.post("/api/queues", json={"providerId": 999})
+            self.assertEqual(rejected.status_code, 404)
+        messages = [record.getMessage() for record in captured.records]
+        self.assertTrue(any(message.startswith("queue.join") for message in messages))
+        self.assertTrue(any(message.startswith("queue.leave") for message in messages))
+        self.assertTrue(any(message.startswith("api error status=404") for message in messages))
+
+    def test_log_file_is_written_next_to_data_dir(self):
+        log_path = Path(self.temp_dir.name) / "logs" / "smartqueue.log"
+        self.assertTrue(log_path.exists())
+        contents = log_path.read_text(encoding="utf-8")
+        self.assertIn("SmartQueue app created: store=json-file", contents)
+
     def test_provider_dashboard_shows_booked_services_and_view_options(self):
         provider_user = self.create_account("provider", "view-owner@example.com")
         provider_id = str(provider_user["providerId"])

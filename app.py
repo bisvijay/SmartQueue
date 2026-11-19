@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import re
 import secrets
@@ -11,11 +12,12 @@ from email.utils import parseaddr
 from pathlib import Path
 
 import qrcode
-from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, g, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
 from qrcode.image.svg import SvgPathImage
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from logging_config import configure_logging
 from postgres_store import PostgresStore
 from store import FileStore
 
@@ -53,6 +55,7 @@ def create_app(test_config=None):
         ADMIN_PASSWORD=os.environ.get("SMARTQUEUE_ADMIN_PASSWORD", ""),
         DATABASE_URL=os.environ.get("SMARTQUEUE_DATABASE_URL", ""),
         DATABASE_SSL_ROOT_CERT=os.environ.get("SMARTQUEUE_DB_SSL_ROOT_CERT", ""),
+        LOG_FILE=os.environ.get("SMARTQUEUE_LOG_FILE", ""),
     )
     if test_config:
         app.config.update(test_config)
@@ -63,6 +66,28 @@ def create_app(test_config=None):
     )
     app.config["POSTGRES_ENABLED"] = isinstance(store, PostgresStore)
     app.extensions["smartqueue_store"] = store
+    log = configure_logging(app.config["DATA_DIR"], app.config.get("LOG_FILE") or None)
+    log.info(
+        "SmartQueue app created: store=%s",
+        "postgres" if app.config["POSTGRES_ENABLED"] else "json-file",
+    )
+
+    @app.before_request
+    def _log_request_start():
+        g.request_started = time.perf_counter()
+
+    @app.after_request
+    def _log_request_end(response):
+        started = getattr(g, "request_started", None)
+        if started is not None:
+            log.debug(
+                "request method=%s path=%s status=%s duration_ms=%.1f",
+                request.method,
+                request.path,
+                response.status_code,
+                (time.perf_counter() - started) * 1000,
+            )
+        return response
 
     def seed_providers():
         if app.config["POSTGRES_ENABLED"]:
@@ -239,6 +264,12 @@ def create_app(test_config=None):
             "createdAt": datetime.now(timezone.utc).isoformat(),
         }
         store.create("queues", entry["id"], entry, entry)
+        log.info(
+            "queue.walk_in queue=%s provider=%s service=%s",
+            entry["id"],
+            provider["id"],
+            entry["service"],
+        )
         refresh_provider_metrics(provider)
         store.put("providers", str(provider["id"]), provider, provider)
         return entry
@@ -399,7 +430,20 @@ def create_app(test_config=None):
 
     @app.errorhandler(ApiError)
     def handle_api_error(error):
+        log.log(
+            logging.WARNING if error.status >= 500 else logging.INFO,
+            "api error status=%s method=%s path=%s message=%s",
+            error.status,
+            request.method,
+            request.path,
+            error,
+        )
         return jsonify(error=str(error)), error.status
+
+    @app.errorhandler(500)
+    def handle_unexpected_error(error):
+        log.error("unhandled error method=%s path=%s", request.method, request.path, exc_info=error)
+        return jsonify(error="Something went wrong. Please try again."), 500
 
     @app.errorhandler(413)
     def request_too_large(_error):
@@ -499,9 +543,11 @@ def create_app(test_config=None):
         )
         record = store.get("users", user["id"]) if user else None
         if not record or not check_password_hash(record.get("passwordHash", ""), request.form.get("password", "")):
+            log.info("auth.login_failed")
             return render_template("login.html", error="Email/phone or password is incorrect."), 401
         session.clear()
         session["user_id"] = record["id"]
+        log.info("auth.login user=%s role=%s", record["id"], record["role"])
         session["csrf_token"] = secrets.token_urlsafe(32)
         destination = url_for("home", view="provider") if record["role"] == "provider" else url_for("home")
         return redirect(destination, code=303)
@@ -742,6 +788,7 @@ def create_app(test_config=None):
                 if photo_written:
                     photo_path.unlink(missing_ok=True)
                 raise RuntimeError("Could not create the account record.")
+            log.info("auth.registered user=%s role=%s", user_id, form["role"])
             if provider is not None:
                 provider_id = str(provider["id"])
                 try:
@@ -906,6 +953,13 @@ def create_app(test_config=None):
             }
             if not store.create("queues", queue["id"], queue, queue):
                 raise ApiError(409, "Your queue changed while joining. Refresh and try again.")
+            log.info(
+                "queue.join queue=%s customer=%s provider=%s service=%s",
+                queue["id"],
+                user["id"],
+                provider["id"],
+                queue["service"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers")), 201
@@ -934,6 +988,12 @@ def create_app(test_config=None):
                 raise ApiError(404, "Active queue entry not found.")
             provider = require_provider(str(queue["providerId"]))
             store.delete("queues", queue_id)
+            log.info(
+                "queue.leave queue=%s customer=%s provider=%s",
+                queue_id,
+                user["id"],
+                queue["providerId"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(providers=store.list("providers"))
@@ -953,6 +1013,7 @@ def create_app(test_config=None):
             entry["status"] = "serving"
             entry["startedAt"] = datetime.now(timezone.utc).isoformat()
             store.put("queues", entry["id"], entry, entry)
+            log.info("queue.call_next queue=%s provider=%s", entry["id"], provider["id"])
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=entry, providers=store.list("providers"))
@@ -997,6 +1058,7 @@ def create_app(test_config=None):
                 "createdAt": provider["approvalUpdatedAt"],
             }
             store.create("provider_reviews", event["id"], event, event)
+            log.info("provider.approval provider=%s decision=%s", provider["id"], provider["approvalStatus"])
             return jsonify(provider=provider)
 
     @app.post("/api/providers/<provider_id>/request-review")
@@ -1114,6 +1176,7 @@ def create_app(test_config=None):
                 provider["serviceDuration"] = duration
                 refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
+            log.info("provider.update provider=%s fields=%s", provider["id"], ",".join(sorted(body)))
             return jsonify(providers=store.list("providers"))
 
     @app.patch("/api/providers/<provider_id>/queues/<queue_id>")
@@ -1147,6 +1210,12 @@ def create_app(test_config=None):
                 queue["status"] = "completed"
                 queue["completedAt"] = datetime.now(timezone.utc).isoformat()
             store.put("queues", queue["id"], queue, queue)
+            log.info(
+                "queue.%s queue=%s provider=%s",
+                body["action"],
+                queue["id"],
+                provider["id"],
+            )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers"))

@@ -1,4 +1,5 @@
 import json
+import logging
 import ssl
 import threading
 import time
@@ -9,6 +10,8 @@ from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
 import pg8000.dbapi
 
+
+logger = logging.getLogger("smartqueue.postgres")
 
 TABLES = {
     "users": "accounts",
@@ -129,11 +132,13 @@ class PostgresStore:
         raw = getattr(connection, "raw", None)
         return raw is not None and hasattr(raw, "_usock") and raw._usock is None
 
-    def _discard_persistent_connection(self):
+    def _discard_persistent_connection(self, quiet=False):
         connection = getattr(self._local, "persistent_connection", None)
         self._local.persistent_connection = None
         self._local.persistent_last_used = None
         if connection is not None:
+            if not quiet:
+                logger.warning("postgres connection discarded; the next operation reconnects")
             try:
                 connection.close()
             except Exception:
@@ -155,6 +160,7 @@ class PostgresStore:
                     connection = None
         if connection is None:
             connection = self._open_connection()
+            logger.debug("postgres connection established")
             self._local.persistent_connection = connection
         self._local.persistent_last_used = time.monotonic()
         return connection
@@ -165,7 +171,7 @@ class PostgresStore:
         The next operation opens a fresh one. Mainly for scripts and
         tests; the long-running app simply keeps reusing its connection.
         """
-        self._discard_persistent_connection()
+        self._discard_persistent_connection(quiet=True)
 
     @staticmethod
     def _is_connection_error(error):
