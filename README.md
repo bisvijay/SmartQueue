@@ -1,6 +1,6 @@
-# SmartQueue
+# NextInQueue
 
-SmartQueue is a responsive queue-management app for customers and service providers. Customers discover businesses, check live queue estimates, and join a queue; providers manage their listing, handle walk-ins, serve customers, and review completed services. The current app is a Flask prototype backed by a local JSON file store.
+NextInQueue is a responsive queue-management app for customers and service providers. Customers discover businesses, check live queue estimates, and join a queue; providers manage their listing, handle walk-ins, serve customers, and review completed services. The current app is a Flask prototype backed by a local JSON file store.
 
 ## App details
 
@@ -8,7 +8,7 @@ SmartQueue is a responsive queue-management app for customers and service provid
 - **Provider experience:** manage the business listing and photo, open or pause the queue, add in-person customers, serve the next customer, review completed services, and display a QR code that opens the provider’s walk-in page.
 - **Queue lifecycle:** visits move through waiting and serving to completed, or can end as left, cancelled, or no-show. Queue activity and customer contact details are available to the customer and the owning provider, not to public discovery.
 - **Phone numbers:** an explicit `+` country code is preserved. A number without one defaults to India and is stored in E.164 form with `+91`.
-- **Scope:** SmartQueue is for managing queues and business listings only. Do not collect diagnoses, symptoms, insurance details, or other health information.
+- **Scope:** NextInQueue is for managing queues and business listings only. Do not collect diagnoses, symptoms, insurance details, or other health information.
 
 ## Run locally
 
@@ -252,19 +252,19 @@ In an actual migration, create `accounts`, `providers`, and `media_assets` first
 
 ### Connect this Flask app to Supabase
 
-The app can use PostgreSQL when `SMARTQUEUE_DATABASE_URL` is set; without it, the app continues to use the local JSON store. The database driver is installed from `requirements.txt`.
+The app can use PostgreSQL when `NEXTINQUEUE_DATABASE_URL` is set; without it, the app continues to use the local JSON store. The database driver is installed from `requirements.txt`.
 
 1. In Supabase, open the project and select **Connect → Direct Connection string**. Choose the **Session pooler** if your network cannot reach the direct endpoint. Copy the URI and replace its password placeholder locally. Do not send the URI, password, or API keys in chat or commit them to Git. If the database password contains reserved URI characters, URL-encode them.
 2. Stop the Flask app. In the repository root, set the connection URI in the same PowerShell window you will use for the following commands:
 
    ```powershell
-   $env:SMARTQUEUE_DATABASE_URL = "postgresql://postgres...:YOUR_ENCODED_PASSWORD@.../postgres"
+   $env:NEXTINQUEUE_DATABASE_URL = "postgresql://postgres...:YOUR_ENCODED_PASSWORD@.../postgres"
    ```
 
    If TLS reports a certificate verification error, download the **server root certificate** from **Supabase → Database Settings → SSL Configuration → Download Certificate**. Save the PEM file locally and set its path in that same shell:
 
    ```powershell
-   $env:SMARTQUEUE_DB_SSL_ROOT_CERT = "C:\secure\supabase-root.crt"
+   $env:NEXTINQUEUE_DB_SSL_ROOT_CERT = "C:\secure\supabase-root.crt"
    ```
 
    This keeps TLS certificate and hostname verification enabled. Do not disable SSL verification to work around certificate errors.
@@ -297,7 +297,7 @@ The app can use PostgreSQL when `SMARTQUEUE_DATABASE_URL` is set; without it, th
 
 7. Verify sign-in, provider discovery, queue joins, provider queue actions, and approval decisions in the app. In Supabase **Table Editor**, verify imported row counts for `accounts`, `providers`, `provider_services`, `provider_favorites`, `queue_visits`, and `provider_reviews`. Keep a protected backup of the local JSON data until the migration is verified.
 
-The importer maps the existing JSON IDs to UUIDs and updates their references. The app persists core account, provider, service, favorite, queue, and review data in the matching relational tables; extra app fields are retained in `app_data` JSONB columns during this compatibility stage. It does not configure Supabase Auth or expose the database to browser code. Flask continues to handle sign-in, and the admin approval view still uses `SMARTQUEUE_ADMIN_PASSWORD`; database-backed admin-account provisioning is not implemented yet.
+The importer maps the existing JSON IDs to UUIDs and updates their references. The app persists core account, provider, service, favorite, queue, and review data in the matching relational tables; extra app fields are retained in `app_data` JSONB columns during this compatibility stage. It does not configure Supabase Auth or expose the database to browser code. Flask continues to handle sign-in, and the admin approval view still uses `NEXTINQUEUE_ADMIN_PASSWORD`; database-backed admin-account provisioning is not implemented yet.
 
 For current migration status, exact setup commands, known limitations, and the handoff for a future maintainer, see [`docs/SUPABASE_MIGRATION_HANDOFF.md`](docs/SUPABASE_MIGRATION_HANDOFF.md).
 
@@ -328,13 +328,13 @@ For a low-volume pilot, monitor usage, arrange database exports to a separate lo
 
 Use **Sign up** to register as a customer or service provider. Provide an email address, a phone number, or both; any supplied contact value must be unique. Phone numbers with an explicit `+` country code keep that code; numbers without one are treated as Indian numbers and normalized to `+91` (10 digits, or 11 digits with a leading domestic `0`). Enter the password twice to catch typos; passwords are stored as salted hashes. The login page links to a local-demo password reset that requires both registered email and phone to match, then asks for the new password twice. The app does not verify contact ownership or send reset codes, so this reset flow is only suitable for a trusted local prototype and must be replaced with a verified recovery process before deployment. An optional JPEG, PNG, or WebP photo (up to 5 MB) is normalized and saved locally. If other registration details need correction, the form retains the valid photo in private, session-bound staging for up to one hour, so it does not need to be uploaded again. Provider photos appear on business listing cards; customer photos remain in local storage and are not publicly served. Accounts are persisted in `data/store/users/`; the users collection index omits password hashes.
 
-Register customers and providers with email and/or a phone number, then sign in using that email or phone number and the account password. Numbers without a `+` country code default to India (`+91`); explicit international country codes are preserved. A provider’s registered email and phone are initially used as its public business contact; the provider can edit them independently in business settings. Providers can update their listing photo, name, category, address, 160-character tagline, business contacts, services, opening hours, and average service duration from the owner-only dashboard. Queue counts, ratings, and reviews are managed by SmartQueue. Customers can search listings, filter by category or an optional location, save favorites, join one provider queue at a time, and see an updated queue position and wait estimate. Scanning a provider dashboard QR code opens a public walk-in form for that provider. Providers can add walk-in customers with contact details; select a waiting customer to start serving; and mark the service complete. The provider dashboard filters between active queue entries and completed service history; completed entries remain visible only to the owning provider. Walk-in customer contact details are available only in the owning provider’s dashboard/API, not public provider discovery. The dashboard can expand to a QR-and-live-queue display and refreshes queue activity automatically. State-changing form/API requests require a session CSRF token.
+Register customers and providers with email and/or a phone number, then sign in using that email or phone number and the account password. Numbers without a `+` country code default to India (`+91`); explicit international country codes are preserved. A provider’s registered email and phone are initially used as its public business contact; the provider can edit them independently in business settings. Providers can update their listing photo, name, category, address, 160-character tagline, business contacts, services, opening hours, and average service duration from the owner-only dashboard. Queue counts, ratings, and reviews are managed by NextInQueue. Customers can search listings, filter by category or an optional location, save favorites, join one provider queue at a time, and see an updated queue position and wait estimate. Scanning a provider dashboard QR code opens a public walk-in form for that provider. Providers can add walk-in customers with contact details; select a waiting customer to start serving; and mark the service complete. The provider dashboard filters between active queue entries and completed service history; completed entries remain visible only to the owning provider. Walk-in customer contact details are available only in the owning provider’s dashboard/API, not public provider discovery. The dashboard can expand to a QR-and-live-queue display and refreshes queue activity automatically. State-changing form/API requests require a session CSRF token.
 
-Contact details are not verified. A random session signing key is generated at app startup for local use; set a persistent, secret `SMARTQUEUE_SECRET_KEY` environment variable when running the app if sessions must survive restarts. This prototype is not a substitute for production authentication, durable database transactions, or verified accounts.
+Contact details are not verified. A random session signing key is generated at app startup for local use; set a persistent, secret `NEXTINQUEUE_SECRET_KEY` environment variable when running the app if sessions must survive restarts. This prototype is not a substitute for production authentication, durable database transactions, or verified accounts.
 
 ## Demo views
 
-The customer view is the default, with fictional seed listings for preview. Newly registered providers are pending review and do not appear in customer discovery or accept queue entries until an administrator approves them. Configure `SMARTQUEUE_ADMIN_PASSWORD` in the app environment and restart the app to enable the **Admin** sign-in link; this separate password protects the provider approval dashboard. Review each pending listing before approving or rejecting it. Rejected providers can correct their details and request another review. Existing listings without an approval status remain approved for backward compatibility. Queue actions, approval decisions, and provider settings persist in the local JSON store.
+The customer view is the default, with fictional seed listings for preview. Newly registered providers are pending review and do not appear in customer discovery or accept queue entries until an administrator approves them. Configure `NEXTINQUEUE_ADMIN_PASSWORD` in the app environment and restart the app to enable the **Admin** sign-in link; this separate password protects the provider approval dashboard. Review each pending listing before approving or rejecting it. Rejected providers can correct their details and request another review. Existing listings without an approval status remain approved for backward compatibility. Queue actions, approval decisions, and provider settings persist in the local JSON store.
 
 ## Example scenarios
 
@@ -342,7 +342,7 @@ The customer view is the default, with fictional seed listings for preview. Newl
 
 1. A customer registers with an email, a phone, or both. A phone entered without a country code is treated as Indian (`+91`); an explicit international code is kept.
 2. The customer searches or filters providers, checks the service and wait estimate, and selects **Join queue**.
-3. SmartQueue records the visit and shows the customer their current position and estimated wait. They may leave while waiting; that visit should remain in history as `left`.
+3. NextInQueue records the visit and shows the customer their current position and estimated wait. They may leave while waiting; that visit should remain in history as `left`.
 
 ### Provider serves a walk-in
 
@@ -354,4 +354,4 @@ The customer view is the default, with fictional seed listings for preview. Newl
 
 1. Completed and ended visits contribute timestamps and outcomes to operational metrics.
 2. A scheduled aggregation groups arrivals, wait durations, service durations, and cancellation/leave/no-show rates by provider, service, weekday, and local hour.
-3. SmartQueue can use those aggregates to improve wait estimates and show providers expected busy periods. The forecast does not require customer names, phone numbers, email addresses, or health details.
+3. NextInQueue can use those aggregates to improve wait estimates and show providers expected busy periods. The forecast does not require customer names, phone numbers, email addresses, or health details.

@@ -1686,7 +1686,7 @@ class ApiTests(unittest.TestCase):
 
         self.client.post("/logout")
         register = self.client.get("/register?created=1")
-        self.assertIn(b"Log in to SmartQueue", register.data)
+        self.assertIn(b"Log in to NextInQueue", register.data)
         self.assertNotIn(b"will be added separately", register.data)
 
 
