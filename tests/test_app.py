@@ -614,6 +614,13 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"signed-in-chip", landing.data)
         self.assertIn(b"Guest", landing.data)
 
+    def test_mobile_layout_rules_are_in_place(self):
+        styles = self.client.get("/static/styles.css").get_data(as_text=True)
+        self.assertIn(".header-inner { width: calc(100% - 24px); flex-wrap: wrap;", styles)
+        self.assertIn(".header-actions { flex-basis: 100%; flex-wrap: wrap;", styles)
+        self.assertIn(".theme-picker, .language-picker { font-size: 11px;", styles)
+        self.assertIn(".customer-cell small { font-size: 9.5px; }", styles)
+
     def test_current_queues_skips_entries_whose_provider_is_gone(self):
         self.create_account()
         self.login_account("jamie@example.com")
