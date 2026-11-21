@@ -1216,6 +1216,93 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(invalid_phone.status_code, 400)
         self.assertEqual(invalid_description.status_code, 400)
 
+    def test_provider_can_set_time_per_service(self):
+        user = self.create_account("provider")
+        self.login_account("jamie@example.com")
+        provider_id = str(user["providerId"])
+        updated = self.client.patch(f"/api/providers/{provider_id}", json={
+            "serviceDurations": {"Cut": 15, "Color": 45},
+        })
+        self.assertEqual(updated.status_code, 200)
+        provider = self.store.get("providers", provider_id)
+        # "Cut" matches the 15-minute average, so only "Color" needs storing.
+        self.assertEqual(provider["serviceDurations"], {"Color": 45})
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b"Time per service", dashboard.data)
+        self.assertIn(b'data-service="Color"', dashboard.data)
+        self.assertIn(b'value="45"', dashboard.data)
+        for payload in (
+            {"serviceDurations": {"Color": 0}},
+            {"serviceDurations": {"Color": 181}},
+            {"serviceDurations": {"Color": "45"}},
+            {"serviceDurations": ["Color"]},
+        ):
+            self.assertEqual(
+                self.client.patch(f"/api/providers/{provider_id}", json=payload).status_code,
+                400,
+                payload,
+            )
+        # Times for services that do not exist are dropped, not stored.
+        self.client.patch(f"/api/providers/{provider_id}", json={"serviceDurations": {"Massage": 30}})
+        self.assertNotIn("serviceDurations", self.store.get("providers", provider_id))
+        # Removing a service drops its stored time.
+        self.client.patch(f"/api/providers/{provider_id}", json={"serviceDurations": {"Color": 45}})
+        self.client.patch(f"/api/providers/{provider_id}", json={"services": ["Cut"]})
+        self.assertNotIn("serviceDurations", self.store.get("providers", provider_id))
+
+    def test_wait_estimates_use_each_services_time(self):
+        provider_user = self.create_account("provider", "salon@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.login_account("salon@example.com")
+        updated = self.client.patch(f"/api/providers/{provider_id}", json={
+            "services": ["Haircut", "Facial", "Eyebrow"],
+            "serviceDurations": {"Facial": 45, "Eyebrow": 5},
+        })
+        self.assertEqual(updated.status_code, 200)
+        # Customers see the configured times before joining.
+        walk_in = self.client.get(f"/providers/{provider_id}/walk-in")
+        self.assertIn(b">45 min<", walk_in.data)
+        self.assertIn(b">5 min<", walk_in.data)
+
+        self.create_account("customer", "ana@example.com")
+        self.login_account("ana@example.com")
+        first = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Facial"]})
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(first.json["queue"]["wait"], 0)
+        listing = self.client.get("/")
+        self.assertIn(b'data-minutes="45"', listing.data)
+
+        self.create_account("customer", "ben@example.com")
+        self.login_account("ben@example.com")
+        second = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Haircut"]})
+        self.assertEqual(second.status_code, 201)
+        # Haircut falls back to the 15-minute average, but Ben waits behind
+        # Ana's 45-minute Facial — not behind one 15-minute average slot.
+        self.assertEqual(second.json["queue"]["wait"], 45)
+        current = self.client.get("/api/queues/current")
+        self.assertEqual(current.json["queues"][0]["wait"], 45)
+        self.assertEqual(current.json["queues"][0]["peopleAhead"], 1)
+
+        self.create_account("customer", "cyd@example.com")
+        self.login_account("cyd@example.com")
+        third = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Haircut", "Facial"]})
+        self.assertEqual(third.status_code, 201)
+        self.assertEqual(third.json["queue"]["wait"], 60)
+
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["people"], 3)
+        self.assertEqual(provider["wait"], 120)
+
+        self.login_account("salon@example.com")
+        queues = self.client.get(f"/api/providers/{provider_id}/queues?status=active").json["queues"]
+        by_service = {entry["service"]: entry for entry in queues}
+        self.assertEqual(by_service["Facial"]["duration"], 45)
+        self.assertEqual(by_service["Facial"]["estimatedWait"], 0)
+        self.assertEqual(by_service["Haircut"]["duration"], 15)
+        self.assertEqual(by_service["Haircut"]["estimatedWait"], 45)
+        self.assertEqual(by_service["Haircut, Facial"]["duration"], 60)
+        self.assertEqual(by_service["Haircut, Facial"]["estimatedWait"], 60)
+
     def test_provider_can_update_listing_photo_and_only_owner_can_upload(self):
         owner = self.create_account("provider", "photo-owner@example.com")
         other_owner = self.create_account("provider", "photo-other@example.com")

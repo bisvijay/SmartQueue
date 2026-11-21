@@ -159,18 +159,53 @@ def create_app(test_config=None):
             key=lambda entry: (entry.get("status") != "serving", entry.get("createdAt", "")),
         )
 
+    def provider_service_minutes(provider):
+        """Configured minutes per service name; anything unusable is ignored."""
+        configured = provider.get("serviceDurations")
+        if not isinstance(configured, dict):
+            return {}
+        minutes = {}
+        for name, value in configured.items():
+            if isinstance(value, bool):
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(name, str) and name.strip() and 1 <= value <= 180:
+                minutes[name.strip()] = value
+        return minutes
+
+    def visit_minutes(provider, service_field):
+        """Minutes one booked visit takes: the sum of its services' times.
+
+        A service without a configured time uses the provider's average.
+        """
+        average = max(1, int(provider.get("serviceDuration", 15)))
+        configured = provider_service_minutes(provider)
+        names = [part.strip() for part in str(service_field or "").split(",") if part.strip()]
+        if not names:
+            return average
+        return sum(configured.get(name, average) for name in names)
+
+    def total_wait_minutes(provider, entries):
+        return sum(visit_minutes(provider, entry.get("service")) for entry in entries)
+
     def refresh_provider_metrics(provider):
         active = active_provider_queues(provider["id"])
         provider["people"] = len(active)
-        provider["wait"] = len(active) * max(1, int(provider.get("serviceDuration", 15)))
+        provider["wait"] = total_wait_minutes(provider, active)
         return provider
 
     def provider_queue_view(provider, entries=None):
         if entries is None:
             entries = active_provider_queues(provider["id"])
-        service_duration = max(1, int(provider.get("serviceDuration", 15)))
-        serving_count = sum(entry.get("status") == "serving" for entry in entries)
-        waiting_ahead = 0
+        serving_minutes = sum(
+            visit_minutes(provider, entry.get("service"))
+            for entry in entries
+            if entry.get("status") == "serving"
+        )
+        ahead_minutes = 0
         visible_entries = []
         for entry in entries:
             customer_id = entry.get("customerId")
@@ -182,12 +217,13 @@ def create_app(test_config=None):
                 "customerPhone": customer.get("phone") if customer else entry.get("phone"),
                 "customerAddress": entry.get("address"),
                 "customerService": entry.get("service"),
+                "duration": visit_minutes(provider, entry.get("service")),
             }
             if entry.get("status") == "serving":
                 visible["estimatedWait"] = 0
             elif entry.get("status") == "waiting":
-                visible["estimatedWait"] = service_duration * (waiting_ahead + serving_count)
-                waiting_ahead += 1
+                visible["estimatedWait"] = serving_minutes + ahead_minutes
+                ahead_minutes += visible["duration"]
             visible_entries.append(visible)
         return visible_entries
 
@@ -247,7 +283,6 @@ def create_app(test_config=None):
         service = resolve_service_selection(provider, requested)
 
         active_queues = active_provider_queues(provider["id"])
-        service_duration = max(1, int(provider.get("serviceDuration", 15)))
         entry = {
             "id": str(uuid.uuid4()),
             "customerId": None,
@@ -259,7 +294,7 @@ def create_app(test_config=None):
             "service": service.strip(),
             "source": "walk-in",
             "peopleAhead": len(active_queues),
-            "wait": len(active_queues) * service_duration,
+            "wait": total_wait_minutes(provider, active_queues),
             "status": "waiting",
             "createdAt": datetime.now(timezone.utc).isoformat(),
         }
@@ -475,8 +510,7 @@ def create_app(test_config=None):
                     continue
                 active = active_provider_queues(entry["providerId"])
                 position = next((index for index, item in enumerate(active) if item["id"] == entry["id"]), None)
-                duration = max(1, int(provider_for_queue.get("serviceDuration", 15)))
-                wait = duration * max(0, position or 0)
+                wait = total_wait_minutes(provider_for_queue, active[:position]) if position is not None else 0
                 my_queues.append({
                     "queue": {**entry, "wait": wait},
                     "provider": provider_for_queue,
@@ -899,11 +933,10 @@ def create_app(test_config=None):
             provider = store.get("providers", str(queue["providerId"]))
             if provider is None:
                 continue
-            duration = max(1, int(provider.get("serviceDuration", 15)))
             enriched.append({
                 **queue,
                 "peopleAhead": max(0, (position or 0) - (1 if queue.get("status") == "serving" else 0)),
-                "wait": duration * max(0, position or 0),
+                "wait": total_wait_minutes(provider, active[:position]) if position is not None else 0,
                 "position": "Now" if queue.get("status") == "serving" else (position + 1 if position is not None else None),
             })
         return jsonify(queues=enriched)
@@ -942,14 +975,13 @@ def create_app(test_config=None):
                 return jsonify(queue=existing, providers=store.list("providers")), 200
 
             active_queues = active_provider_queues(provider_id)
-            service_duration = max(1, int(provider.get("serviceDuration", 15)))
             queue = {
                 "id": str(uuid.uuid4()),
                 "customerId": user["id"],
                 "providerId": provider["id"],
                 "service": resolve_service_selection(provider, body.get("services")),
                 "peopleAhead": len(active_queues),
-                "wait": len(active_queues) * service_duration,
+                "wait": total_wait_minutes(provider, active_queues),
                 "status": "waiting",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
@@ -1118,7 +1150,7 @@ def create_app(test_config=None):
             raise ApiError(400, "Request body must be a JSON object.")
         allowed = {
             "status", "name", "category", "address", "description", "services", "hours",
-            "serviceDuration", "contactEmail", "contactPhone",
+            "serviceDuration", "serviceDurations", "contactEmail", "contactPhone",
         }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
@@ -1177,6 +1209,38 @@ def create_app(test_config=None):
                 if not isinstance(duration, int) or isinstance(duration, bool) or not 1 <= duration <= 180:
                     raise ApiError(400, "Average service time must be between 1 and 180 minutes.")
                 provider["serviceDuration"] = duration
+                refresh_provider_metrics(provider)
+            if "serviceDurations" in body:
+                durations = body["serviceDurations"]
+                if not isinstance(durations, dict) or len(durations) > 20:
+                    raise ApiError(400, "Service times must be an object mapping service names to minutes.")
+                cleaned = {}
+                for name, minutes in durations.items():
+                    if (
+                        not isinstance(name, str)
+                        or not name.strip()
+                        or len(name.strip()) > 60
+                        or not isinstance(minutes, int)
+                        or isinstance(minutes, bool)
+                        or not 1 <= minutes <= 180
+                    ):
+                        raise ApiError(400, "Each service time must be between 1 and 180 minutes.")
+                    cleaned[name.strip()] = minutes
+                provider["serviceDurations"] = cleaned
+            if "services" in body or "serviceDuration" in body or "serviceDurations" in body:
+                # Keep per-service times in step with the final service list:
+                # drop times for services that no longer exist, and drop times
+                # that just repeat the average (the fallback covers those).
+                average = max(1, int(provider.get("serviceDuration", 15)))
+                kept = {
+                    name: minutes
+                    for name, minutes in provider_service_minutes(provider).items()
+                    if name in (provider.get("services") or []) and minutes != average
+                }
+                if kept:
+                    provider["serviceDurations"] = kept
+                else:
+                    provider.pop("serviceDurations", None)
                 refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             log.info("provider.update provider=%s fields=%s", provider["id"], ",".join(sorted(body)))

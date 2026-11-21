@@ -188,6 +188,8 @@
     "Comma separated, up to 20 items (60 characters each)": "कॉमा से अलग करें, अधिकतम 20 आइटम (प्रत्येक 60 अक्षर)",
     "Opening hours": "खुलने का समय",
     "Average service time (minutes)": "औसत सेवा समय (मिनट)",
+    "Time per service": "प्रत्येक सेवा का समय",
+    "Minutes each service takes — used for wait estimates. Blank means the average above.": "प्रत्येक सेवा में लगने वाले मिनट — प्रतीक्षा अनुमान में उपयोग होते हैं। खाली छोड़ने पर ऊपर का औसत समय लागू होगा।",
     "Save settings": "सेटिंग सहेजें",
     "IN PERSON": "व्यक्तिगत रूप से",
     "Add walk-in": "वॉक-इन जोड़ें",

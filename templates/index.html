@@ -173,7 +173,7 @@
                   {% if provider.contactPhone %}<a href="tel:{{ provider.contactPhone }}"><span aria-hidden="true">☎</span>{{ provider.contactPhone }}</a>{% endif %}
                 </div>
                 {% endif %}
-                <div class="service-tags">{% for service in provider.services %}<span>{{ service }}</span>{% endfor %}</div>
+                <div class="service-tags">{% for service in provider.services %}<span data-minutes="{{ (provider.serviceDurations or {}).get(service, '') }}">{{ service }}</span>{% endfor %}</div>
                 <div class="queue-summary">
                   <div class="queue-stat"><span class="queue-stat-icon people-icon" aria-hidden="true">♙</span><span><strong class="provider-people">{{ provider.people }} people</strong><small>in line</small></span></div>
                   <div class="queue-stat"><span class="queue-stat-icon clock-icon" aria-hidden="true">◷</span><span><strong>~<span class="provider-wait">{{ provider.wait }}</span> min</strong><small>estimated wait</small></span></div>
@@ -331,6 +331,14 @@
               <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
               <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
               <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>
+              {% if provider.services %}
+              <div class="service-times">
+                <p class="service-times-heading">Time per service <small>Minutes each service takes — used for wait estimates. Blank means the average above.</small></p>
+                {% for service in provider.services %}
+                <label class="service-time-row"><span>{{ service }}</span><input type="number" min="1" max="180" class="service-duration-input" data-service="{{ service }}" value="{{ (provider.serviceDurations or {}).get(service, '') }}" placeholder="{{ provider.serviceDuration|default(15) }}" /></label>
+                {% endfor %}
+              </div>
+              {% endif %}
               <button class="button button-dark full-width" type="submit">Save settings</button>
             </form>
             <p class="inline-notice" id="provider-settings-notice" role="status" hidden></p>

@@ -263,7 +263,7 @@ class PostgresStore:
     def _provider_record(self, row, connection):
         record = dict(row["app_data"] or {})
         services = connection.execute(
-            "SELECT name FROM provider_services WHERE provider_id = %s AND is_active ORDER BY display_order, name",
+            "SELECT name, estimated_minutes FROM provider_services WHERE provider_id = %s AND is_active ORDER BY display_order, name",
             (row["id"],),
         ).fetchall()
         record.update({
@@ -280,6 +280,20 @@ class PostgresStore:
             "approvalStatus": row["approval_status"],
             "approvalNote": row["approval_note"],
         })
+        if not isinstance(record.get("serviceDurations"), dict):
+            # Fall back to the relational per-service estimates for records
+            # whose app_data predates the serviceDurations field.
+            try:
+                average = int(record.get("serviceDuration", 15))
+            except (TypeError, ValueError):
+                average = 15
+            derived = {
+                service["name"]: service["estimated_minutes"]
+                for service in services
+                if isinstance(service["estimated_minutes"], int) and service["estimated_minutes"] != average
+            }
+            if derived:
+                record["serviceDurations"] = derived
         if row["approval_updated_at"]:
             record["approvalUpdatedAt"] = row["approval_updated_at"].isoformat()
         return record
@@ -446,12 +460,20 @@ class PostgresStore:
             return False
         provider_id = UUID(record_id)
         service_names = record.get("services", [])
+        configured = record.get("serviceDurations") if isinstance(record.get("serviceDurations"), dict) else {}
+        try:
+            average = max(1, int(record.get("serviceDuration", 15)))
+        except (TypeError, ValueError):
+            average = 15
         connection.execute("DELETE FROM provider_services WHERE provider_id = %s", (provider_id,))
         for order, name in enumerate(service_names):
+            minutes = configured.get(name, average)
+            if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 180:
+                minutes = average
             connection.execute("""
                 INSERT INTO provider_services (id, provider_id, name, estimated_minutes, display_order)
                 VALUES (%s, %s, %s, %s, %s)
-            """, (str(uuid4()), provider_id, name, max(1, int(record.get("serviceDuration", 15))), order))
+            """, (str(uuid4()), provider_id, name, minutes, order))
         return True
 
     def _write_queue(self, connection, record, create=False):

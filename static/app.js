@@ -132,17 +132,23 @@
         label.className = "service-option";
         const box = document.createElement("input");
         box.type = "checkbox";
-        box.value = service;
+        box.value = service.name;
         boxes.push(box);
         const text = document.createElement("span");
-        text.textContent = service;
+        text.textContent = service.name;
         label.append(box, text);
+        if (service.minutes) {
+          const minutes = document.createElement("span");
+          minutes.className = "service-minutes";
+          minutes.textContent = `${service.minutes} min`;
+          label.append(minutes);
+        }
         list.append(label);
       }
       panel.append(list);
       const note = document.createElement("p");
       note.className = "join-services-note";
-      note.textContent = `You can pick more than one. Nothing picked? We’ll book “${services[0]}”.`;
+      note.textContent = `You can pick more than one. Nothing picked? We’ll book “${services[0].name}”.`;
       panel.append(note);
       const actions = document.createElement("div");
       actions.className = "join-services-actions";
@@ -171,7 +177,9 @@
     document.querySelectorAll(".join-queue").forEach((button) => button.addEventListener("click", () => {
       const card = button.closest(".provider-card");
       const services = card
-        ? [...card.querySelectorAll(".service-tags span")].map((tag) => tag.textContent.trim()).filter(Boolean)
+        ? [...card.querySelectorAll(".service-tags span")]
+            .map((tag) => ({ name: tag.textContent.trim(), minutes: Number(tag.dataset.minutes) || null }))
+            .filter((service) => service.name)
         : [];
       if (button.classList.contains("button-joined") || services.length === 0) {
         // Already in line, or the provider lists no services: join directly —
@@ -336,7 +344,7 @@
       callNextButton.hidden = showingCompleted;
       if (!showingCompleted) {
         peopleMetric.textContent = queues.length;
-        waitMetric.textContent = `${queues.length * serviceDuration} min`;
+        waitMetric.textContent = `${queues.reduce((total, queue) => total + (queue.duration || serviceDuration), 0)} min`;
         callNextButton.disabled = queues.length === 0 || serving;
       }
     }
@@ -505,6 +513,13 @@
       event.preventDefault();
       const form = event.currentTarget;
       const values = new FormData(form);
+      const serviceDurations = {};
+      form.querySelectorAll(".service-duration-input").forEach((input) => {
+        const minutes = Number(input.value);
+        if (input.value.trim() !== "" && Number.isInteger(minutes) && minutes >= 1 && minutes <= 180) {
+          serviceDurations[input.dataset.service] = minutes;
+        }
+      });
       try {
         await api(`/api/providers/${encodeURIComponent(providerId)}`, {
           method: "PATCH",
@@ -518,6 +533,7 @@
             services: values.get("services").split(",").map((service) => service.trim()).filter(Boolean),
             hours: values.get("hours"),
             serviceDuration: Number(values.get("serviceDuration")),
+            serviceDurations,
           }),
         });
         window.location.reload();

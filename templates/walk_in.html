@@ -47,7 +47,7 @@
             <div class="walkin-service-picker">
               <span class="walkin-service-label">Service <small>You can pick more than one</small></span>
               <div class="join-services-list">
-                {% for service in provider.services %}<label class="service-option"><input type="checkbox" name="services" value="{{ service }}" />{{ service }}</label>{% endfor %}
+                {% for service in provider.services %}<label class="service-option"><input type="checkbox" name="services" value="{{ service }}" />{{ service }}{% set mins = (provider.serviceDurations or {}).get(service) %}{% if mins %}<span class="service-minutes">{{ mins }} min</span>{% endif %}</label>{% endfor %}
               </div>
               <small>If you pick none, {{ provider.services[0] }} will be booked.</small>
             </div>
