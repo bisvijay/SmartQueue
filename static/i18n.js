@@ -33,15 +33,36 @@
 
     // Hero
     "YOUR NEIGHBORHOOD, IN REAL TIME": "आपका मोहल्ला, रियल टाइम में",
-    "Your time,": "आपका समय,",
-    "better": "और बेहतर",
-    "spent.": "बिताएँ।",
+    "Your place in line.": "लाइन में आपकी जगह।",
+    "Without the wait.": "बिना इंतज़ार के।",
     "Find a spot in line before you leave. More living, less waiting.": "निकलने से पहले लाइन में अपनी जगह पक्की करें। ज़्यादा जीना, कम इंतज़ार।",
     "Find your place": "अपनी जगह खोजें",
-    "YOUR SPOT IS SAVED": "आपकी जगह सुरक्षित है",
-    "in line · about 12 min": "लाइन में · लगभग 12 मिनट",
     "A little more": "आपके दिन में",
     "room in your day.": "थोड़ी और जगह।",
+    // How it works
+    "HOW IT WORKS": "यह कैसे काम करता है",
+    "Your place in line,": "लाइन में आपकी जगह,",
+    "without standing in it.": "बिना लाइन में खड़े हुए।",
+    "Salons, clinics, cafés, service centers — see live waits near you before you step out.": "सैलून, क्लिनिक, कैफ़े, सेवा केंद्र — घर से निकलने से पहले अपने पास की लाइव प्रतीक्षा देखें।",
+    "Pick your services and join in seconds. Estimates use real service times — a 5-minute eyebrow is not a 45-minute facial.": "अपनी सेवाएँ चुनें और कुछ सेकंड में जुड़ें। अनुमान असली सेवा समय पर आधारित हैं — 5 मिनट की आइब्रो, 45 मिनट के फ़ेशियल जैसी नहीं होती।",
+    "Arrive right on time": "ठीक समय पर पहुँचें",
+    "Follow the queue live and reach just before your turn. The waiting happens on your phone, not in a crowd.": "कतार को लाइव देखें और अपनी बारी से ठीक पहले पहुँचें। इंतज़ार भीड़ में नहीं, आपके फ़ोन पर होता है।",
+    "Scan or tap": "स्कैन या टैप करें",
+    "Scan the QR at the shop, or join from home.": "दुकान पर QR स्कैन करें, या घर से जुड़ें।",
+    "Get your spot": "अपनी जगह पक्की करें",
+    "See your number and the live wait time.": "अपना नंबर और लाइव प्रतीक्षा समय देखें।",
+    "Relax & track": "आराम करें और देखें",
+    "Grab a chai and watch your turn come closer.": "चाय पिएँ और अपनी बारी नज़दीक आते देखें।",
+    "It's your turn": "अब आपकी बारी",
+    "Walk in when you're called. No standing in line.": "बुलाए जाने पर अंदर जाएँ। लाइन में खड़े होने की ज़रूरत नहीं।",
+    // Contact and legal pages
+    "SAY HELLO": "नमस्ते कहें",
+    "Questions about a queue, your account, or listing your business on SmartQueue? We read every message and reply as quickly as we can.": "किसी कतार, अपने खाते, या SmartQueue पर अपना व्यवसाय जोड़ने के बारे में सवाल? हम हर संदेश पढ़ते हैं और जितनी जल्दी हो सके जवाब देते हैं।",
+    "Write to us": "हमें लिखें",
+    "Visit us": "हमसे मिलें",
+    "For businesses": "व्यवसायों के लिए",
+    "Contact us — SmartQueue": "हमसे संपर्क करें — SmartQueue",
+    "Privacy & terms — SmartQueue": "गोपनीयता और शर्तें — SmartQueue",
 
     // Discover
     "THE GOOD STUFF, RIGHT AROUND YOU": "सबसे अच्छी चीज़ें, बिल्कुल आपके आस-पास",
@@ -311,7 +332,7 @@
     "Provider listings require approval.": "प्रदाता लिस्टिंग के लिए स्वीकृति आवश्यक है।",
 
     // Page titles
-    "SmartQueue — Your time, better spent": "SmartQueue — आपका समय, बेहतर उपयोग",
+    "SmartQueue — Your place in line. Without the wait.": "SmartQueue — लाइन में आपकी जगह। बिना इंतज़ार के।",
     "Log in — SmartQueue": "लॉग इन — SmartQueue",
     "Create your account — SmartQueue": "अपना खाता बनाएँ — SmartQueue",
     "Reset password — SmartQueue": "पासवर्ड रीसेट करें — SmartQueue",

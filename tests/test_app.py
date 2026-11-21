@@ -621,6 +621,29 @@ class ApiTests(unittest.TestCase):
         self.assertIn(".theme-picker, .language-picker { font-size: 11px;", styles)
         self.assertIn(".customer-cell small { font-size: 9.5px; }", styles)
 
+    def test_tagline_hero_card_and_info_pages(self):
+        home = self.client.get("/")
+        self.assertIn(b"Your place in line. Without the wait.", home.data)
+        self.assertIn(b"<em>Without the wait.</em>", home.data)
+        self.assertNotIn(b"Your time, better spent", home.data)
+        self.assertNotIn(b"YOUR SPOT IS SAVED", home.data)
+        self.assertIn(b"how-diagram", home.data)
+        self.assertIn(b"Scan or tap", home.data)
+        self.assertIn(b'href="/contact"', home.data)
+        self.assertIn(b'href="/privacy-terms"', home.data)
+
+        contact = self.client.get("/contact")
+        self.assertEqual(contact.status_code, 200)
+        self.assertIn(b"info@nextinqueue.in", contact.data)
+        self.assertIn(b"Ward No 37", contact.data)
+        self.assertIn(b"Bettiah, Pin - 845438", contact.data)
+
+        legal = self.client.get("/privacy-terms")
+        self.assertEqual(legal.status_code, 200)
+        self.assertIn(b"Privacy Policy", legal.data)
+        self.assertIn(b"Terms of Service", legal.data)
+        self.assertIn(b"Digital Personal Data Protection Act, 2023", legal.data)
+
     def test_current_queues_skips_entries_whose_provider_is_gone(self):
         self.create_account()
         self.login_account("jamie@example.com")

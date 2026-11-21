@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7f4" />
     <meta name="description" content="Find nearby services and spend less time waiting with SmartQueue." />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <title>SmartQueue — Your time, better spent</title>
+    <title>SmartQueue — Your place in line. Without the wait.</title>
     <script>try{var t=window.localStorage.getItem("smartqueue.theme");if(t&&t!=="classic")document.documentElement.dataset.theme=t;}catch(e){}</script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
@@ -73,17 +73,12 @@
           <div class="hero-inner">
             <div class="hero-copy">
               <span class="hero-kicker"><span class="pulse-dot"></span> YOUR NEIGHBORHOOD, IN REAL TIME</span>
-              <h1>Your time,<br />better <em>spent.</em></h1>
+              <h1>Your place in line.<br /><em>Without the wait.</em></h1>
               <p>Find a spot in line before you leave. More living, less waiting.</p>
               <a class="hero-link" href="#discover">Find your place <span>↓</span></a>
             </div>
             <div class="hero-art" aria-hidden="true">
               <div class="hero-sun"></div><div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div>
-              <div class="hero-ticket">
-                <div class="ticket-top"><span class="ticket-mark">✳</span><span>YOUR SPOT IS SAVED</span></div>
-                <div class="ticket-main"><span>Willow & Sage</span><strong>03</strong><small>in line · about 12 min</small></div>
-                <div class="ticket-progress"><i></i></div>
-              </div>
               <span class="hero-spark spark-one">✦</span><span class="hero-spark spark-two">✳</span>
               <span class="hero-caption">A little more<br />room in your day.</span>
             </div>
@@ -209,11 +204,20 @@
         </section>
 
         <section class="how-section" id="how-it-works">
-          <div class="how-intro"><p class="eyebrow">A BETTER KIND OF WAIT</p><h2>Make room for<br /><em>your day.</em></h2></div>
+          <div class="how-intro"><p class="eyebrow">HOW IT WORKS</p><h2>Your place in line,<br /><em>without standing in it.</em></h2></div>
           <div class="how-steps">
-            <article><span>01</span><div><h3>Find your place</h3><p>See nearby services and their current wait, all in one spot.</p></div></article>
-            <article><span>02</span><div><h3>Save your spot</h3><p>Join a virtual queue and get a clear picture of what’s ahead.</p></div></article>
-            <article><span>03</span><div><h3>Arrive when it’s right</h3><p>Spend less time standing around and more time doing your thing.</p></div></article>
+            <article><span>01</span><div><h3>Find your place</h3><p>Salons, clinics, cafés, service centers — see live waits near you before you step out.</p></div></article>
+            <article><span>02</span><div><h3>Save your spot</h3><p>Pick your services and join in seconds. Estimates use real service times — a 5-minute eyebrow is not a 45-minute facial.</p></div></article>
+            <article><span>03</span><div><h3>Arrive right on time</h3><p>Follow the queue live and reach just before your turn. The waiting happens on your phone, not in a crowd.</p></div></article>
+          </div>
+          <div class="how-diagram" aria-label="How SmartQueue works, step by step">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📱</span><strong>Scan or tap</strong><small>Scan the QR at the shop, or join from home.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🎫</span><strong>Get your spot</strong><small>See your number and the live wait time.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">☕</span><strong>Relax &amp; track</strong><small>Grab a chai and watch your turn come closer.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🔔</span><strong>It's your turn</strong><small>Walk in when you're called. No standing in line.</small></div>
           </div>
         </section>
       </main>
@@ -223,7 +227,7 @@
           <div class="footer-links">
             <div><strong>Explore</strong><a href="#discover">Find a service</a><a href="#how-it-works">How it works</a></div>
             <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><button data-view="admin">Admin demo</button></div>
-            <div><strong>Say hello</strong><a href="mailto:hello@smartqueue.example">Contact us</a><a href="#home">Privacy &amp; terms</a></div>
+            <div><strong>Say hello</strong><a href="{{ url_for('contact') }}">Contact us</a><a href="{{ url_for('privacy_terms') }}">Privacy &amp; terms</a></div>
           </div>
         </div>
         <div class="footer-bottom"><span>© 2025 SmartQueue. Your time is yours.</span><span>Made for the in-between moments. <b>✳</b></span></div>

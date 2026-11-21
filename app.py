@@ -562,6 +562,14 @@ def create_app(test_config=None):
             favorite_ids={str(item) for item in user.get("favoriteProviderIds", [])} if user and user.get("role") == "customer" else set(),
         )
 
+    @app.get("/contact")
+    def contact():
+        return render_template("contact.html")
+
+    @app.get("/privacy-terms")
+    def privacy_terms():
+        return render_template("privacy_terms.html")
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "GET":
