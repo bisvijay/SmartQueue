@@ -28,10 +28,14 @@
           {% if success %}
           <div class="public-walkin-success" role="status">
             <span class="queue-panel-icon" aria-hidden="true">✓</span>
-            <div><h1>You’re on the list.</h1><p>Your place at {{ provider.name }} is saved.</p></div>
+            {% if buffer %}
+            <div><h1>You’re on the buffer waitlist.</h1><p>Today’s regular queue at <span data-i18n-name>{{ provider.name }}</span> is full. The shop will fit you in if time opens up, but a spot today isn’t guaranteed.</p></div>
+            {% else %}
+            <div><h1>You’re on the list.</h1><p>Your place at <span data-i18n-name>{{ provider.name }}</span> is saved.</p></div>
+            {% endif %}
           </div>
           {% else %}
-          <h1>Welcome to {{ provider.name }}</h1>
+          <h1>Welcome to <span data-i18n-name>{{ provider.name }}</span></h1>
           <p class="public-walkin-intro">Add your details to join the queue. Your contact information is shared only with this provider.</p>
           {% if error %}<p class="public-walkin-error" role="alert">{{ error }}</p>{% endif %}
           {% if provider.status != 'Open' %}

@@ -44,7 +44,7 @@
             {% if current_user %}
             <span class="signed-in-chip">
               <span class="signed-in-avatar">{% set name_parts = (current_user.name or "").split() %}{{ ((name_parts[0][:1] if name_parts else "?") ~ (name_parts[1][:1] if name_parts|length > 1 else ""))|upper }}</span>
-              <span class="signed-in-meta"><strong>{{ current_user.name or "Guest" }}</strong><small>{{ current_user.role|capitalize }}</small></span>
+              <span class="signed-in-meta"><strong data-i18n-name>{{ current_user.name or "Guest" }}</strong><small>{{ current_user.role|capitalize }}</small></span>
             </span>
             {% elif admin_authenticated %}
             <span class="signed-in-chip">
@@ -120,17 +120,18 @@
           {% for item in my_queues %}
           {% set queue = item.queue %}
           {% set joined = item.provider %}
-          <section class="my-queue panel" aria-live="polite" data-queue-panel data-queue-id="{{ queue.id }}" data-queue-status="{{ queue.status }}">
+          <section class="my-queue panel" aria-live="polite" data-queue-panel data-queue-id="{{ queue.id }}" data-queue-status="{{ queue.status }}" data-queue-buffer="{{ 'true' if item.buffer else 'false' }}">
             <div class="queue-panel-left">
               <div class="queue-panel-icon" aria-hidden="true">✓</div>
-              <div><p class="eyebrow queue-state">{% if queue.status == 'serving' %}YOU’RE BEING SERVED{% else %}YOU’RE ON THE LIST{% endif %}</p><h2>{{ joined.name }}</h2><p class="queue-panel-address">{{ joined.address }}</p>{% if queue.service %}<p class="queue-panel-service">Service: {{ queue.service }}</p>{% endif %}</div>
+              <div><p class="eyebrow queue-state">{% if queue.status == 'serving' %}YOU’RE BEING SERVED{% elif item.buffer %}BUFFER WAITLIST{% else %}YOU’RE ON THE LIST{% endif %}</p><h2 data-i18n-name>{{ joined.name }}</h2><p class="queue-panel-address">{{ joined.address }}</p>{% if queue.service %}<p class="queue-panel-service">Service: {{ queue.service }}</p>{% endif %}</div>
             </div>
             <div class="queue-panel-stats">
               <div><span class="queue-number queue-position">{{ item.position }}</span><span class="queue-label">Your place</span></div>
               <div><span class="queue-number">~<span class="queue-wait">{{ item.wait }}</span> <small>min</small></span><span class="queue-label">Estimated wait</span></div>
+              {% if item.predictedTurnLabel %}<div><span class="queue-number queue-predicted">{{ item.predictedTurnLabel }}</span><span class="queue-label">Predicted turn</span></div>{% endif %}
             </div>
             <div class="queue-panel-action">
-              <p><span class="status-dot"></span> We’ll keep your place here</p>
+              {% if item.buffer %}<p class="buffer-note"><span class="status-dot"></span> You’re on the buffer waitlist — today’s regular queue is full. The shop will fit you in if time opens up, but a spot today isn’t guaranteed.</p>{% else %}<p><span class="status-dot"></span> We’ll keep your place here</p>{% endif %}
               {% if queue.status == 'waiting' %}<button class="text-button leave-queue" data-queue-id="{{ queue.id }}">Leave queue</button>{% endif %}
             </div>
           </section>
@@ -157,7 +158,7 @@
               </div>
               <div class="provider-content">
                 <div class="provider-heading">
-                  <div><p class="eyebrow">{{ provider.category }}</p><h3>{{ provider.name }}</h3></div>
+                  <div><p class="eyebrow">{{ provider.category }}</p><h3 data-i18n-name>{{ provider.name }}</h3></div>
                   <div class="rating"><span aria-hidden="true">★</span> {{ provider.rating }} <span class="review-count">({{ provider.reviews }})</span></div>
                 </div>
                 <p class="provider-description">{{ provider.description }}</p>
@@ -200,7 +201,7 @@
           {% else %}
           <div class="empty-state"><span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Add providers to the data store to see them here.</p></div>
           {% endif %}
-          <div class="demo-notice"><span aria-hidden="true">ⓘ</span><p><strong>Preview mode.</strong> Queue counts begin with sample data; queue actions are saved to this server’s JSON data store.</p></div>
+          <div class="demo-notice"><span aria-hidden="true">ⓘ</span><p><strong>Live queues.</strong> Counts and wait times update as businesses serve their customers.</p></div>
         </section>
 
         <section class="how-section" id="how-it-works">
@@ -226,7 +227,7 @@
           <div class="footer-brand">{{ logo() }}<p>Make room for what matters.<br />Less waiting starts here.</p></div>
           <div class="footer-links">
             <div><strong>Explore</strong><a href="#discover">Find a service</a><a href="#how-it-works">How it works</a></div>
-            <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><button data-view="admin">Admin demo</button></div>
+            <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><button data-view="admin">Admin</button></div>
             <div><strong>Say hello</strong><a href="{{ url_for('contact') }}">Contact us</a><a href="{{ url_for('privacy_terms') }}">Privacy &amp; terms</a></div>
           </div>
         </div>
@@ -266,6 +267,7 @@
             <div class="queue-filters" role="group" aria-label="Filter queue services">
               <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
               <button class="queue-filter" type="button" data-queue-filter="completed" aria-pressed="false">Completed services</button>
+              <button class="queue-filter" type="button" data-queue-filter="dequeued" aria-pressed="false">Dequeued</button>
             </div>
             <div class="queue-view-options">
               <label class="view-filter-label">Filter by service
@@ -278,21 +280,24 @@
               <label class="view-toggle"><input type="checkbox" data-view-toggle="service" checked /> Service</label>
               <label class="view-toggle"><input type="checkbox" data-view-toggle="contact" checked /> Contact</label>
               <label class="view-toggle"><input type="checkbox" data-view-toggle="wait" checked /> Wait</label>
+              <label class="view-toggle"><input type="checkbox" data-view-toggle="predicted" checked /> Predicted</label>
             </div>
-            <div class="queue-table-heading"><span class="heading-customer">CUSTOMER</span><span class="heading-service">SERVICE</span><span class="heading-wait">WAIT</span><span class="heading-action">STATUS / ACTION</span></div>
+            <div class="queue-table-heading"><span class="heading-customer">CUSTOMER</span><span class="heading-service">SERVICE</span><span class="heading-wait">WAIT</span><span class="heading-predicted">PREDICTED</span><span class="heading-action">STATUS / ACTION</span></div>
             <div id="queue-rows" aria-live="polite" data-service-duration="{{ provider.serviceDuration|default(15) }}">
               {% for entry in provider_queue %}
               <div class="queue-table-row" data-queue-id="{{ entry.id }}">
-                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong>{{ entry.customerName }}</strong><small class="customer-contact">{% if entry.customerPhone %}{{ entry.customerPhone }}{% endif %}{% if entry.customerPhone and entry.customerEmail %} · {% endif %}{% if entry.customerEmail %}{{ entry.customerEmail }}{% endif %}{% if entry.customerAddress %} · {{ entry.customerAddress }}{% endif %}{% if not entry.customerPhone and not entry.customerEmail and not entry.customerAddress and not entry.customerService %}{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}{% endif %}</small></span></div>
+                <div class="customer-cell"><span class="customer-avatar avatar-{{ loop.index0 % 5 + 1 }}">{{ entry.customerName[:2]|upper }}</span><span><strong data-i18n-name>{{ entry.customerName }}</strong><small class="customer-contact">{% if entry.customerPhone %}{{ entry.customerPhone }}{% endif %}{% if entry.customerPhone and entry.customerEmail %} · {% endif %}{% if entry.customerEmail %}{{ entry.customerEmail }}{% endif %}{% if entry.customerAddress %} · {{ entry.customerAddress }}{% endif %}{% if not entry.customerPhone and not entry.customerEmail and not entry.customerAddress and not entry.customerService %}{% if entry.status == 'serving' %}Service in progress{% else %}Joined {{ entry.createdAt[:16]|replace('T', ' ') }}{% endif %}{% endif %}</small></span></div>
                 <span class="service-cell">{% if entry.customerService %}{% for name in entry.customerService.split(', ') %}<span class="service-pill">{{ name }}</span>{% endfor %}{% else %}—{% endif %}</span>
                 <span class="wait-cell">{% if entry.status == 'serving' %}Now{% else %}~{{ entry.estimatedWait }} min{% endif %}</span>
+                <span class="predicted-cell">{% if entry.status == 'waiting' and entry.predictedTurnLabel %}{{ entry.predictedTurnLabel }}{% else %}—{% endif %}</span>
                 <span class="queue-row-action">
                   {% if entry.status == 'serving' %}
                   <span class="table-status next-up">Serving</span>
                   <button class="button button-complete queue-action" data-action="complete" data-queue-id="{{ entry.id }}" type="button">Complete</button>
                   {% else %}
-                  <span class="table-status waiting">{% if loop.first %}Next up{% else %}Waiting{% endif %}</span>
+                  {% if entry.buffer %}<span class="table-status buffer">Buffer waitlist</span>{% elif entry.carriedOver %}<span class="table-status carried">Carried over</span>{% else %}<span class="table-status waiting">{% if loop.first %}Next up{% else %}Waiting{% endif %}</span>{% endif %}
                   <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" type="button" {% if service_in_progress %}disabled{% endif %}>Start service</button>
+                  <button class="button button-outline queue-action queue-remove" data-action="remove" data-queue-id="{{ entry.id }}" type="button">Remove</button>
                   {% endif %}
                 </span>
               </div>
@@ -335,6 +340,14 @@
               <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
               <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
               <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>
+              <div class="service-times">
+                <p class="service-times-heading">Your day <small>Set opening and closing times to switch on daily capacity limits, the buffer waitlist, and end-of-day queue handling.</small></p>
+                <label>Opening time<input name="openTime" type="time" value="{{ provider.openTime or '' }}" /></label>
+                <label>Closing time<input name="closeTime" type="time" value="{{ provider.closeTime or '' }}" /></label>
+                <label>Timezone<select name="timezone">{% for zone, label in provider_timezones.items() %}<option value="{{ zone }}" {% if (provider.timezone or 'Asia/Kolkata') == zone %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label>Daily buffer (minutes) <small>Extra service time beyond closing we can promise — covers no-shows and overruns. New joins past the limit join the buffer waitlist.</small><input name="bufferMinutes" type="number" min="0" max="240" value="{{ provider.bufferMinutes if provider.bufferMinutes is defined and provider.bufferMinutes is not none else 60 }}" /></label>
+                <label class="checkbox-label"><input name="carryForwardQueue" type="checkbox" {% if provider.carryForwardQueue %}checked{% endif %} /> Carry yesterday’s waiting customers into the next day <small>Off: the queue clears at day end and those customers move to the Dequeued tab.</small></label>
+              </div>
               {% if provider.services %}
               <div class="service-times">
                 <p class="service-times-heading">Time per service <small>Minutes each service takes — used for wait estimates. Blank means the average above.</small></p>
@@ -370,7 +383,7 @@
             {% endif %}
           </section>
         </div>
-        <div class="dashboard-disclaimer">Queue and business settings are saved to this server’s local data store.</div>
+        <div class="dashboard-disclaimer">Queue and business settings are saved to your NextInQueue account.</div>
         </div>
       </main>
       {% else %}

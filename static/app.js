@@ -232,12 +232,19 @@
           }
           for (const panel of queuePanels) {
             const entry = queues.find((item) => item.id === panel.dataset.queueId);
-            if (!entry || entry.status !== panel.dataset.queueStatus) {
+            if (!entry || entry.status !== panel.dataset.queueStatus
+              || String(Boolean(entry.buffer)) !== panel.dataset.queueBuffer) {
               window.location.reload();
               return;
             }
             panel.querySelector(".queue-position").textContent = entry.position;
             panel.querySelector(".queue-wait").textContent = entry.wait;
+            const predicted = panel.querySelector(".queue-predicted");
+            if (predicted && entry.predictedTurnAt) {
+              predicted.textContent = new Date(entry.predictedTurnAt)
+                .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                .replace(/^0/, "");
+            }
           }
         } catch (error) {
           showError(error.message);
@@ -278,9 +285,16 @@
       return element;
     }
 
+    const REMOVE_REASON_LABELS = {
+      no_show: "No-show",
+      removed: "Removed",
+      day_end: "Day ended",
+    };
+
     function renderQueue(queues, filter = activeQueueFilter) {
       queueRows.replaceChildren();
       const showingCompleted = filter === "completed";
+      const showingDequeued = filter === "dequeued";
       const serving = queues.some((entry) => entry.status === "serving");
       let visibleCount = 0;
       for (const [index, entry] of queues.entries()) {
@@ -293,7 +307,8 @@
         customer.className = "customer-cell";
         appendText(customer, "span", `customer-avatar avatar-${index % 5 + 1}`, (entry.customerName || "Customer").slice(0, 2).toUpperCase());
         const customerText = document.createElement("span");
-        appendText(customerText, "strong", "", entry.customerName || "Customer");
+        const nameElement = appendText(customerText, "strong", "", entry.customerName || "Customer");
+        nameElement.setAttribute("data-i18n-name", "");
         const details = [entry.customerPhone, entry.customerEmail, entry.customerAddress].filter(Boolean).join(" · ")
           || (entry.status === "serving" ? "Service in progress" : "Customer");
         appendText(customerText, "small", "customer-contact", details);
@@ -308,11 +323,24 @@
           serviceCell.textContent = "—";
         }
         row.append(serviceCell);
-        appendText(row, "span", "wait-cell", showingCompleted ? formatCompletedAt(entry.completedAt) : entry.status === "serving" ? "Now" : `~${entry.estimatedWait} min`);
+        appendText(row, "span", "wait-cell", showingCompleted
+          ? formatCompletedAt(entry.completedAt)
+          : showingDequeued
+            ? formatCompletedAt(entry.removedAt)
+            : entry.status === "serving" ? "Now" : `~${entry.estimatedWait} min`);
+        appendText(row, "span", "predicted-cell", !showingCompleted && !showingDequeued && entry.status === "waiting" && entry.predictedTurnAt
+          ? new Date(entry.predictedTurnAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "—");
         const action = document.createElement("span");
         action.className = "queue-row-action";
         if (showingCompleted) {
           appendText(action, "span", "table-status completed", "Completed");
+        } else if (showingDequeued) {
+          appendText(action, "span", "table-status removed", REMOVE_REASON_LABELS[entry.removeReason] || "No-show");
+          const button = appendText(action, "button", "button button-outline queue-action", "Restore");
+          button.type = "button";
+          button.dataset.action = "restore";
+          button.dataset.queueId = entry.id;
         } else if (entry.status === "serving") {
           appendText(action, "span", "table-status next-up", "Serving");
           const button = appendText(action, "button", "button button-complete queue-action", "Complete");
@@ -320,29 +348,41 @@
           button.dataset.action = "complete";
           button.dataset.queueId = entry.id;
         } else {
-          appendText(action, "span", "table-status waiting", index === 0 ? "Next up" : "Waiting");
+          if (entry.buffer) {
+            appendText(action, "span", "table-status buffer", "Buffer waitlist");
+          } else if (entry.carriedOver) {
+            appendText(action, "span", "table-status carried", "Carried over");
+          } else {
+            appendText(action, "span", "table-status waiting", index === 0 ? "Next up" : "Waiting");
+          }
           const button = appendText(action, "button", "button button-outline queue-action", "Start service");
           button.type = "button";
           button.dataset.action = "serve";
           button.dataset.queueId = entry.id;
           button.disabled = serving;
+          const removeButton = appendText(action, "button", "button button-outline queue-action queue-remove", "Remove");
+          removeButton.type = "button";
+          removeButton.dataset.action = "remove";
+          removeButton.dataset.queueId = entry.id;
         }
         row.append(action);
         queueRows.append(row);
       }
       noWaiting.textContent = queues.length !== 0 && visibleCount === 0
         ? "No customers for this service."
-        : showingCompleted ? "No completed services yet." : "No one waiting. Enjoy the breather.";
+        : showingCompleted ? "No completed services yet." : showingDequeued ? "No dequeued customers." : "No one waiting. Enjoy the breather.";
       noWaiting.hidden = visibleCount !== 0;
       queueCount.textContent = queues.length;
       const countLabel = queueCount.parentElement;
       countLabel.replaceChildren(queueCount);
       appendText(countLabel, "span", "", showingCompleted
         ? ` completed service${queues.length === 1 ? "" : "s"}`
-        : ` customer${queues.length === 1 ? "" : "s"} in your queue`);
-      queueFilterHeading.textContent = showingCompleted ? "COMPLETED" : "WAIT";
-      callNextButton.hidden = showingCompleted;
-      if (!showingCompleted) {
+        : showingDequeued
+          ? ` dequeued customer${queues.length === 1 ? "" : "s"}`
+          : ` customer${queues.length === 1 ? "" : "s"} in your queue`);
+      queueFilterHeading.textContent = showingCompleted ? "COMPLETED" : showingDequeued ? "REMOVED" : "WAIT";
+      callNextButton.hidden = showingCompleted || showingDequeued;
+      if (!showingCompleted && !showingDequeued) {
         peopleMetric.textContent = queues.length;
         waitMetric.textContent = `${queues.reduce((total, queue) => total + (queue.duration || serviceDuration), 0)} min`;
         callNextButton.disabled = queues.length === 0 || serving;
@@ -438,6 +478,10 @@
     queueRows.addEventListener("click", async (event) => {
       const button = event.target.closest(".queue-action");
       if (!button) return;
+      if (button.dataset.action === "remove") {
+        const name = button.closest(".queue-table-row")?.querySelector(".customer-cell strong")?.textContent || "This customer";
+        if (!window.confirm(`Remove ${name} from the queue? They will appear in the Dequeued tab and can be restored if they show up.`)) return;
+      }
       button.disabled = true;
       try {
         await api(`/api/providers/${encodeURIComponent(providerId)}/queues/${encodeURIComponent(button.dataset.queueId)}`, {
@@ -534,6 +578,11 @@
             hours: values.get("hours"),
             serviceDuration: Number(values.get("serviceDuration")),
             serviceDurations,
+            openTime: values.get("openTime") || "",
+            closeTime: values.get("closeTime") || "",
+            timezone: values.get("timezone"),
+            bufferMinutes: Number(values.get("bufferMinutes")),
+            carryForwardQueue: form.querySelector('[name="carryForwardQueue"]')?.checked === true,
           }),
         });
         window.location.reload();

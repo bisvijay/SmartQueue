@@ -7,9 +7,14 @@ import secrets
 import time
 import uuid
 from io import BytesIO
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from pathlib import Path
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - zoneinfo is stdlib on Python 3.9+
+    ZoneInfo = None
 
 import qrcode
 from flask import Flask, abort, g, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
@@ -37,6 +42,18 @@ PROVIDER_CATEGORIES = {
     "Government": ("blue", "⌂"),
     "Other": ("mint", "✳"),
 }
+PROVIDER_TIMEZONES = {
+    "Asia/Kolkata": "India (UTC+5:30)",
+    "America/Los_Angeles": "US Pacific",
+    "America/New_York": "US Eastern",
+    "Europe/London": "London",
+    "UTC": "UTC",
+}
+DEFAULT_PROVIDER_TIMEZONE = "Asia/Kolkata"
+# Measured per-service averages only take over from the configured times once
+# enough real services have been recorded for them to be meaningful.
+MIN_STAT_SAMPLES = 3
+TIME_INPUT = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class ApiError(Exception):
@@ -150,13 +167,19 @@ def create_app(test_config=None):
         return provider
 
     def active_provider_queues(provider_id):
+        # Serving first, then regular waiting in join order, then the buffer
+        # waitlist in join order.
         return sorted(
             (
                 entry for entry in store.list("queues")
                 if str(entry.get("providerId")) == str(provider_id)
                 and entry.get("status") in {"waiting", "serving"}
             ),
-            key=lambda entry: (entry.get("status") != "serving", entry.get("createdAt", "")),
+            key=lambda entry: (
+                entry.get("status") != "serving",
+                bool(entry.get("buffer")),
+                entry.get("createdAt", ""),
+            ),
         )
 
     def provider_service_minutes(provider):
@@ -176,20 +199,251 @@ def create_app(test_config=None):
                 minutes[name.strip()] = value
         return minutes
 
-    def visit_minutes(provider, service_field):
-        """Minutes one booked visit takes: the sum of its services' times.
+    def service_names(service_field):
+        return [part.strip() for part in str(service_field or "").split(",") if part.strip()]
 
-        A service without a configured time uses the provider's average.
-        """
-        average = max(1, int(provider.get("serviceDuration", 15)))
+    def cleaned_stats(raw):
+        """Normalize a {avg, count} measurement record; anything unusable -> None."""
+        if not isinstance(raw, dict):
+            return None
+        try:
+            avg = float(raw.get("avg"))
+            count = int(raw.get("count"))
+        except (TypeError, ValueError):
+            return None
+        if avg <= 0 or count <= 0:
+            return None
+        return {"avg": avg, "count": count}
+
+    def service_measured_minutes(provider, name):
+        """Measured average minutes for one service, once enough data exists."""
+        stats = provider.get("serviceStats")
+        if isinstance(stats, dict):
+            measured = cleaned_stats(stats.get(name))
+            if measured and measured["count"] >= MIN_STAT_SAMPLES:
+                return max(1, round(measured["avg"]))
+        return None
+
+    def effective_service_minutes(provider, name):
+        """Best estimate for one service: measured average, then the
+        provider's configured time for it, then the measured overall
+        average, then the provider's configured average."""
+        measured = service_measured_minutes(provider, name)
+        if measured is not None:
+            return measured
         configured = provider_service_minutes(provider)
-        names = [part.strip() for part in str(service_field or "").split(",") if part.strip()]
+        if name in configured:
+            return configured[name]
+        overall = cleaned_stats(provider.get("overallStats"))
+        if overall and overall["count"] >= MIN_STAT_SAMPLES:
+            return max(1, round(overall["avg"]))
+        return max(1, int(provider.get("serviceDuration", 15)))
+
+    def visit_minutes(provider, service_field):
+        """Minutes one booked visit takes: the sum of its services' times."""
+        names = service_names(service_field)
         if not names:
-            return average
-        return sum(configured.get(name, average) for name in names)
+            return max(1, int(provider.get("serviceDuration", 15)))
+        return sum(effective_service_minutes(provider, name) for name in names)
 
     def total_wait_minutes(provider, entries):
         return sum(visit_minutes(provider, entry.get("service")) for entry in entries)
+
+    def provider_timezone(provider):
+        name = provider.get("timezone")
+        if isinstance(name, str) and name in PROVIDER_TIMEZONES and ZoneInfo is not None:
+            try:
+                return ZoneInfo(name)
+            except Exception:
+                pass
+        # Fallback if tzdata is unavailable: India time, the primary market.
+        return timezone(timedelta(hours=5, minutes=30))
+
+    def provider_local_now(provider, moment=None):
+        moment = moment or datetime.now(timezone.utc)
+        return moment.astimezone(provider_timezone(provider))
+
+    def parse_hhmm(value):
+        if not isinstance(value, str) or not TIME_INPUT.fullmatch(value.strip()):
+            return None
+        hours, minutes = value.strip().split(":")
+        return int(hours), int(minutes)
+
+    def provider_day_window(provider, local_now=None):
+        """Today's (open, close) datetimes in the provider's timezone, or
+        None when the provider has not set both opening and closing times."""
+        opening = parse_hhmm(provider.get("openTime"))
+        closing = parse_hhmm(provider.get("closeTime"))
+        if opening is None or closing is None or closing <= opening:
+            return None
+        local_now = local_now or provider_local_now(provider)
+        open_dt = local_now.replace(hour=opening[0], minute=opening[1], second=0, microsecond=0)
+        close_dt = local_now.replace(hour=closing[0], minute=closing[1], second=0, microsecond=0)
+        return open_dt, close_dt
+
+    def format_local_time(provider, moment_utc):
+        return provider_local_now(provider, moment_utc).strftime("%I:%M %p").lstrip("0")
+
+    def format_hhmm(pair):
+        hour, minute = pair
+        suffix = "AM" if hour < 12 else "PM"
+        return f"{hour % 12 or 12}:{minute:02d} {suffix}"
+
+    def capacity_limit_minutes(provider, local_now=None):
+        """Minutes of service the provider can still take today: the time
+        left until closing plus the daily buffer. None means no limit
+        (the provider has not set opening/closing times)."""
+        window = provider_day_window(provider, local_now)
+        if window is None:
+            return None
+        open_dt, close_dt = window
+        local_now = local_now or provider_local_now(provider)
+        remaining = max(0.0, (close_dt - max(local_now, open_dt)).total_seconds() / 60)
+        try:
+            buffer_minutes = int(provider.get("bufferMinutes", 60))
+        except (TypeError, ValueError):
+            buffer_minutes = 60
+        return int(remaining) + max(0, min(240, buffer_minutes))
+
+    def committed_minutes(provider, entries):
+        """Minutes already promised: everyone being served plus the regular
+        (non-buffer) waiting queue."""
+        return sum(
+            visit_minutes(provider, entry.get("service"))
+            for entry in entries
+            if entry.get("status") == "serving" or not entry.get("buffer")
+        )
+
+    def entry_fits_capacity(provider, entries, extra_minutes):
+        limit = capacity_limit_minutes(provider)
+        if limit is None:
+            return True
+        return committed_minutes(provider, entries) + extra_minutes <= limit
+
+    def promote_buffer_entries(provider):
+        """Move buffer-waitlist entries into the regular queue, in join
+        order, while today's remaining capacity allows. Caller persists
+        the provider record; changed entries are saved here."""
+        if capacity_limit_minutes(provider) is None:
+            return
+        entries = active_provider_queues(provider["id"])
+        committed = committed_minutes(provider, entries)
+        limit = capacity_limit_minutes(provider)
+        for entry in entries:
+            if entry.get("status") != "waiting" or not entry.get("buffer"):
+                continue
+            minutes = visit_minutes(provider, entry.get("service"))
+            if committed + minutes > limit:
+                continue
+            entry["buffer"] = False
+            committed += minutes
+            store.put("queues", entry["id"], entry, entry)
+            log.info("queue.buffer_promoted queue=%s provider=%s", entry["id"], provider["id"])
+
+    def apply_day_rollover(provider):
+        """Start-of-day housekeeping, applied lazily on queue activity.
+
+        Only runs once the provider has set opening/closing times. Waiting
+        entries left over from earlier days are either carried into today
+        (keeping their place at the front) or cleared into the dequeued
+        list, per the provider's carry-forward setting. Must be called
+        inside a store transaction; persists changed entries and, when
+        anything changed, the provider record is left to the caller.
+        """
+        if provider_day_window(provider) is None:
+            return False
+        local_now = provider_local_now(provider)
+        today = local_now.date()
+        changed = False
+        for entry in active_provider_queues(provider["id"]):
+            if entry.get("status") != "waiting":
+                continue
+            try:
+                joined_local = provider_local_now(
+                    provider, datetime.fromisoformat(entry.get("createdAt", ""))
+                )
+            except (TypeError, ValueError):
+                continue
+            if joined_local.date() >= today:
+                continue
+            if provider.get("carryForwardQueue"):
+                if entry.get("buffer") or not entry.get("carriedOver"):
+                    entry["buffer"] = False
+                    entry["carriedOver"] = True
+                    store.put("queues", entry["id"], entry, entry)
+                    changed = True
+            else:
+                entry["status"] = "no_show"
+                entry["buffer"] = False
+                entry["removedAt"] = datetime.now(timezone.utc).isoformat()
+                entry["endedAt"] = entry["removedAt"]
+                entry["removeReason"] = "day_end"
+                store.put("queues", entry["id"], entry, entry)
+                changed = True
+                log.info("queue.day_cleared queue=%s provider=%s", entry["id"], provider["id"])
+        if changed:
+            promote_buffer_entries(provider)
+        return changed
+
+    def record_prediction_outcome(entry):
+        """Log how the join-time prediction compared with the actual wait
+        once the customer is called, for future estimate improvements."""
+        predicted = entry.get("predictedWaitMinutes")
+        started = entry.get("startedAt")
+        created = entry.get("createdAt")
+        if predicted is None or not started or not created:
+            return
+        try:
+            actual = round(
+                (datetime.fromisoformat(started) - datetime.fromisoformat(created)).total_seconds() / 60
+            )
+        except (TypeError, ValueError):
+            return
+        entry["actualWaitMinutes"] = actual
+        log.info(
+            "queue.prediction_outcome queue=%s provider=%s predicted_wait=%s actual_wait=%s error=%s",
+            entry["id"],
+            entry.get("providerId"),
+            predicted,
+            actual,
+            actual - int(predicted),
+        )
+
+    def record_service_time(provider, entry):
+        """Fold a completed visit's real duration into the measured
+        averages used for predictions, and log it against the estimate."""
+        started = entry.get("startedAt")
+        completed = entry.get("completedAt")
+        if not started or not completed:
+            return
+        try:
+            duration = (datetime.fromisoformat(completed) - datetime.fromisoformat(started)).total_seconds() / 60
+        except (TypeError, ValueError):
+            return
+        if duration <= 0:
+            return
+        estimated = visit_minutes(provider, entry.get("service"))
+        names = service_names(entry.get("service")) or ["General service"]
+        share = duration / len(names)
+
+        def updated(raw, value):
+            stats = cleaned_stats(raw) or {"avg": 0.0, "count": 0}
+            total = stats["avg"] * stats["count"] + value
+            return {"avg": total / (stats["count"] + 1), "count": stats["count"] + 1}
+
+        provider["overallStats"] = updated(provider.get("overallStats"), share)
+        if len(names) == 1:
+            stats = dict(provider.get("serviceStats") or {})
+            stats[names[0]] = updated(stats.get(names[0]), duration)
+            provider["serviceStats"] = stats
+        log.info(
+            "queue.service_time queue=%s provider=%s service=%s actual_minutes=%.1f estimated_minutes=%s",
+            entry["id"],
+            provider["id"],
+            entry.get("service"),
+            duration,
+            estimated,
+        )
 
     def refresh_provider_metrics(provider):
         active = active_provider_queues(provider["id"])
@@ -206,6 +460,7 @@ def create_app(test_config=None):
             if entry.get("status") == "serving"
         )
         ahead_minutes = 0
+        now_utc = datetime.now(timezone.utc)
         visible_entries = []
         for entry in entries:
             customer_id = entry.get("customerId")
@@ -218,12 +473,17 @@ def create_app(test_config=None):
                 "customerAddress": entry.get("address"),
                 "customerService": entry.get("service"),
                 "duration": visit_minutes(provider, entry.get("service")),
+                "buffer": bool(entry.get("buffer")),
+                "carriedOver": bool(entry.get("carriedOver")),
             }
             if entry.get("status") == "serving":
                 visible["estimatedWait"] = 0
             elif entry.get("status") == "waiting":
                 visible["estimatedWait"] = serving_minutes + ahead_minutes
                 ahead_minutes += visible["duration"]
+                turn = now_utc + timedelta(minutes=visible["estimatedWait"])
+                visible["predictedTurnAt"] = turn.isoformat()
+                visible["predictedTurnLabel"] = format_local_time(provider, turn)
             visible_entries.append(visible)
         return visible_entries
 
@@ -257,6 +517,7 @@ def create_app(test_config=None):
         ensure_provider_approved(provider)
         if provider.get("status") != "Open":
             raise ApiError(409, "This provider is not accepting customers right now.")
+        apply_day_rollover(provider)
 
         name = body.get("name")
         if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
@@ -283,6 +544,11 @@ def create_app(test_config=None):
         service = resolve_service_selection(provider, requested)
 
         active_queues = active_provider_queues(provider["id"])
+        wait_minutes = total_wait_minutes(provider, active_queues)
+        now_utc = datetime.now(timezone.utc)
+        is_buffer = not entry_fits_capacity(
+            provider, active_queues, visit_minutes(provider, service)
+        )
         entry = {
             "id": str(uuid.uuid4()),
             "customerId": None,
@@ -294,9 +560,12 @@ def create_app(test_config=None):
             "service": service.strip(),
             "source": "walk-in",
             "peopleAhead": len(active_queues),
-            "wait": total_wait_minutes(provider, active_queues),
+            "wait": wait_minutes,
             "status": "waiting",
-            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "buffer": is_buffer,
+            "predictedWaitMinutes": wait_minutes,
+            "predictedTurnAt": (now_utc + timedelta(minutes=wait_minutes)).isoformat(),
+            "createdAt": now_utc.isoformat(),
         }
         store.create("queues", entry["id"], entry, entry)
         log.info(
@@ -304,6 +573,13 @@ def create_app(test_config=None):
             entry["id"],
             provider["id"],
             entry["service"],
+        )
+        log.info(
+            "queue.prediction queue=%s provider=%s predicted_wait=%s buffer=%s",
+            entry["id"],
+            provider["id"],
+            wait_minutes,
+            is_buffer,
         )
         refresh_provider_metrics(provider)
         store.put("providers", str(provider["id"]), provider, provider)
@@ -493,11 +769,23 @@ def create_app(test_config=None):
 
     @app.get("/")
     def home():
+        with store.transaction():
+            for raw_provider in store.list("providers"):
+                store.lock_providers([str(raw_provider["id"])])
+                fresh = store.get("providers", str(raw_provider["id"]))
+                if fresh and apply_day_rollover(fresh):
+                    fresh = refresh_provider_metrics(fresh)
+                    store.put("providers", str(fresh["id"]), fresh, fresh)
         all_providers = [provider_with_contact(provider) for provider in store.list("providers")]
         providers = [
             provider for provider in all_providers
             if provider_approval_status(provider) == "approved"
         ]
+        for listed in providers:
+            opening = parse_hhmm(listed.get("openTime"))
+            closing = parse_hhmm(listed.get("closeTime"))
+            if opening and closing:
+                listed["hours"] = f"{format_hhmm(opening)} – {format_hhmm(closing)}"
         my_queues = []
         user = current_user()
         if user and user.get("role") == "customer":
@@ -516,6 +804,10 @@ def create_app(test_config=None):
                     "provider": provider_for_queue,
                     "position": "Now" if entry.get("status") == "serving" else ((position + 1) if position is not None else "—"),
                     "wait": wait,
+                    "buffer": bool(entry.get("buffer")),
+                    "predictedTurnLabel": format_local_time(
+                        provider_for_queue, datetime.now(timezone.utc) + timedelta(minutes=wait)
+                    ) if entry.get("status") == "waiting" else None,
                 })
             my_queues.sort(key=lambda item: item["queue"].get("createdAt", ""))
         joined_ids = {str(item["queue"]["providerId"]) for item in my_queues}
@@ -559,6 +851,7 @@ def create_app(test_config=None):
             service_in_progress=service_in_progress if view == "provider" else False,
             admin_providers=all_providers if view == "admin" else [],
             provider_categories=PROVIDER_CATEGORIES,
+            provider_timezones=PROVIDER_TIMEZONES,
             favorite_ids={str(item) for item in user.get("favoriteProviderIds", [])} if user and user.get("role") == "customer" else set(),
         )
 
@@ -791,6 +1084,9 @@ def create_app(test_config=None):
                     "reviews": 0,
                     "status": "Open",
                     "hours": "Hours not set",
+                    "timezone": DEFAULT_PROVIDER_TIMEZONE,
+                    "bufferMinutes": 60,
+                    "carryForwardQueue": False,
                     "accent": accent,
                     "icon": icon,
                     "services": services,
@@ -883,7 +1179,8 @@ def create_app(test_config=None):
             return render_template(
                 "walk_in.html",
                 provider=provider,
-                success=request.args.get("joined") == "1",
+                success=request.args.get("joined") in {"1", "buffer"},
+                buffer=request.args.get("joined") == "buffer",
                 error=None,
             )
         try:
@@ -894,20 +1191,35 @@ def create_app(test_config=None):
                 selected_services = request.form.getlist("services")
                 if selected_services:
                     body["services"] = selected_services
-                create_walk_in_entry(provider, body)
+                entry = create_walk_in_entry(provider, body)
         except ApiError as error:
             return render_template(
                 "walk_in.html",
                 provider=provider,
                 success=False,
+                buffer=False,
                 error=str(error),
             ), error.status
-        return redirect(url_for("public_walk_in", provider_id=provider_id, joined="1"), code=303)
+        return redirect(
+            url_for(
+                "public_walk_in",
+                provider_id=provider_id,
+                joined="buffer" if entry.get("buffer") else "1",
+            ),
+            code=303,
+        )
 
     @app.get("/api/providers/<provider_id>/queues")
     def list_provider_queues(provider_id):
         _, provider = require_owned_provider(provider_id)
         queue_status = request.args.get("status", "active")
+        if queue_status in {"active", "dequeued"}:
+            with store.transaction():
+                store.lock_providers([provider_id])
+                provider = require_provider(provider_id)
+                if apply_day_rollover(provider):
+                    refresh_provider_metrics(provider)
+                    store.put("providers", str(provider["id"]), provider, provider)
         if queue_status == "active":
             entries = active_provider_queues(provider_id)
         elif queue_status == "completed":
@@ -920,8 +1232,18 @@ def create_app(test_config=None):
                 key=lambda entry: entry.get("completedAt", ""),
                 reverse=True,
             )
+        elif queue_status == "dequeued":
+            entries = sorted(
+                (
+                    entry for entry in store.list("queues")
+                    if str(entry.get("providerId")) == str(provider_id)
+                    and entry.get("status") == "no_show"
+                ),
+                key=lambda entry: entry.get("removedAt", ""),
+                reverse=True,
+            )
         else:
-            raise ApiError(400, "Choose active or completed services.")
+            raise ApiError(400, "Choose active, completed, or dequeued services.")
         return jsonify(queues=provider_queue_view(provider, entries))
 
     @app.get("/api/queues/current")
@@ -934,18 +1256,36 @@ def create_app(test_config=None):
             and entry.get("status") in {"waiting", "serving"}
         ]
         queues.sort(key=lambda entry: entry.get("createdAt", ""))
+        rolled_over = set()
         enriched = []
         for queue in queues:
-            active = active_provider_queues(queue["providerId"])
-            position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
             provider = store.get("providers", str(queue["providerId"]))
             if provider is None:
                 continue
+            if str(provider["id"]) not in rolled_over:
+                rolled_over.add(str(provider["id"]))
+                with store.transaction():
+                    store.lock_providers([str(provider["id"])])
+                    fresh = require_provider(str(provider["id"]))
+                    if apply_day_rollover(fresh):
+                        refresh_provider_metrics(fresh)
+                        store.put("providers", str(fresh["id"]), fresh, fresh)
+                queue = store.get("queues", queue["id"]) or queue
+                if queue.get("status") not in {"waiting", "serving"}:
+                    continue
+                provider = store.get("providers", str(queue["providerId"])) or provider
+            active = active_provider_queues(queue["providerId"])
+            position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
+            wait = total_wait_minutes(provider, active[:position]) if position is not None else 0
             enriched.append({
                 **queue,
+                "buffer": bool(queue.get("buffer")),
                 "peopleAhead": max(0, (position or 0) - (1 if queue.get("status") == "serving" else 0)),
-                "wait": total_wait_minutes(provider, active[:position]) if position is not None else 0,
+                "wait": wait,
                 "position": "Now" if queue.get("status") == "serving" else (position + 1 if position is not None else None),
+                "predictedTurnAt": (
+                    datetime.now(timezone.utc) + timedelta(minutes=wait)
+                ).isoformat() if queue.get("status") == "waiting" else None,
             })
         return jsonify(queues=enriched)
 
@@ -967,6 +1307,7 @@ def create_app(test_config=None):
             ensure_provider_approved(provider)
             if provider.get("status") != "Open":
                 raise ApiError(409, "This provider is not accepting customers right now.")
+            apply_day_rollover(provider)
             # A customer may wait at several providers at once; only a second
             # active visit at the SAME provider is treated as already joined.
             existing = next(
@@ -983,15 +1324,24 @@ def create_app(test_config=None):
                 return jsonify(queue=existing, providers=store.list("providers")), 200
 
             active_queues = active_provider_queues(provider_id)
+            service = resolve_service_selection(provider, body.get("services"))
+            wait_minutes = total_wait_minutes(provider, active_queues)
+            now_utc = datetime.now(timezone.utc)
+            is_buffer = not entry_fits_capacity(
+                provider, active_queues, visit_minutes(provider, service)
+            )
             queue = {
                 "id": str(uuid.uuid4()),
                 "customerId": user["id"],
                 "providerId": provider["id"],
-                "service": resolve_service_selection(provider, body.get("services")),
+                "service": service,
                 "peopleAhead": len(active_queues),
-                "wait": total_wait_minutes(provider, active_queues),
+                "wait": wait_minutes,
                 "status": "waiting",
-                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "buffer": is_buffer,
+                "predictedWaitMinutes": wait_minutes,
+                "predictedTurnAt": (now_utc + timedelta(minutes=wait_minutes)).isoformat(),
+                "createdAt": now_utc.isoformat(),
             }
             if not store.create("queues", queue["id"], queue, queue):
                 log.warning("queue.join_conflict customer=%s provider=%s", user["id"], provider["id"])
@@ -1002,6 +1352,13 @@ def create_app(test_config=None):
                 user["id"],
                 provider["id"],
                 queue["service"],
+            )
+            log.info(
+                "queue.prediction queue=%s provider=%s predicted_wait=%s buffer=%s",
+                queue["id"],
+                provider["id"],
+                wait_minutes,
+                is_buffer,
             )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
@@ -1037,6 +1394,7 @@ def create_app(test_config=None):
                 user["id"],
                 queue["providerId"],
             )
+            promote_buffer_entries(provider)
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(providers=store.list("providers"))
@@ -1055,6 +1413,7 @@ def create_app(test_config=None):
             entry = waiting[0]
             entry["status"] = "serving"
             entry["startedAt"] = datetime.now(timezone.utc).isoformat()
+            record_prediction_outcome(entry)
             store.put("queues", entry["id"], entry, entry)
             log.info("queue.call_next queue=%s provider=%s", entry["id"], provider["id"])
             refresh_provider_metrics(provider)
@@ -1159,6 +1518,7 @@ def create_app(test_config=None):
         allowed = {
             "status", "name", "category", "address", "description", "services", "hours",
             "serviceDuration", "serviceDurations", "contactEmail", "contactPhone",
+            "openTime", "closeTime", "timezone", "bufferMinutes", "carryForwardQueue",
         }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
@@ -1235,6 +1595,35 @@ def create_app(test_config=None):
                         raise ApiError(400, "Each service time must be between 1 and 180 minutes.")
                     cleaned[name.strip()] = minutes
                 provider["serviceDurations"] = cleaned
+            for key in ("openTime", "closeTime"):
+                if key in body:
+                    value = body[key]
+                    if value is None or value == "":
+                        provider.pop(key, None)
+                    elif parse_hhmm(value) is None:
+                        raise ApiError(400, "Opening and closing times must be in 24-hour HH:MM format.")
+                    else:
+                        provider[key] = value.strip()
+            if ("openTime" in body or "closeTime" in body) or provider.get("openTime") or provider.get("closeTime"):
+                opening = parse_hhmm(provider.get("openTime"))
+                closing = parse_hhmm(provider.get("closeTime"))
+                if (opening is None) != (closing is None):
+                    raise ApiError(400, "Set both opening and closing times, or clear both.")
+                if opening is not None and closing <= opening:
+                    raise ApiError(400, "Closing time must be after opening time.")
+            if "timezone" in body:
+                if not isinstance(body["timezone"], str) or body["timezone"] not in PROVIDER_TIMEZONES:
+                    raise ApiError(400, "Choose a valid timezone.")
+                provider["timezone"] = body["timezone"]
+            if "bufferMinutes" in body:
+                buffer_minutes = body["bufferMinutes"]
+                if not isinstance(buffer_minutes, int) or isinstance(buffer_minutes, bool) or not 0 <= buffer_minutes <= 240:
+                    raise ApiError(400, "Buffer minutes must be between 0 and 240.")
+                provider["bufferMinutes"] = buffer_minutes
+            if "carryForwardQueue" in body:
+                if not isinstance(body["carryForwardQueue"], bool):
+                    raise ApiError(400, "Carry-forward must be true or false.")
+                provider["carryForwardQueue"] = body["carryForwardQueue"]
             if "services" in body or "serviceDuration" in body or "serviceDurations" in body:
                 # Keep per-service times in step with the final service list:
                 # drop times for services that no longer exist, and drop times
@@ -1260,14 +1649,16 @@ def create_app(test_config=None):
         if (
             not isinstance(body, dict)
             or not isinstance(body.get("action"), str)
-            or body["action"] not in {"serve", "complete"}
+            or body["action"] not in {"serve", "complete", "remove", "restore"}
+            or set(body) - {"action", "reason"}
         ):
-            raise ApiError(400, "Choose serve or complete.")
+            raise ApiError(400, "Choose serve, complete, remove, or restore.")
         if not CLIENT_ID.fullmatch(queue_id):
             raise ApiError(400, "A valid queue ID is required.")
         with store.transaction():
             store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
+            apply_day_rollover(provider)
             queue = store.get("queues", queue_id)
             if not queue or str(queue.get("providerId")) != provider_id:
                 raise ApiError(404, "Queue entry not found.")
@@ -1279,18 +1670,64 @@ def create_app(test_config=None):
                     raise ApiError(409, "Complete the current service before starting another.")
                 queue["status"] = "serving"
                 queue["startedAt"] = datetime.now(timezone.utc).isoformat()
-            else:
+                record_prediction_outcome(queue)
+            elif body["action"] == "complete":
                 if queue.get("status") != "serving":
                     raise ApiError(409, "Only a customer currently being served can be completed.")
                 queue["status"] = "completed"
                 queue["completedAt"] = datetime.now(timezone.utc).isoformat()
+                record_service_time(provider, queue)
+            elif body["action"] == "remove":
+                if queue.get("status") != "waiting":
+                    raise ApiError(409, "Only waiting customers can be removed from the queue.")
+                reason = body.get("reason")
+                if reason not in {"no_show", "removed"}:
+                    reason = "no_show"
+                queue["status"] = "no_show"
+                queue["buffer"] = False
+                queue["removedAt"] = datetime.now(timezone.utc).isoformat()
+                queue["endedAt"] = queue["removedAt"]
+                queue["removeReason"] = reason
+                log.info(
+                    "queue.remove queue=%s provider=%s reason=%s",
+                    queue["id"],
+                    provider["id"],
+                    reason,
+                )
+            else:  # restore
+                if queue.get("status") != "no_show":
+                    raise ApiError(409, "Only dequeued customers can be brought back.")
+                customer_id = queue.get("customerId")
+                if customer_id and any(
+                    entry.get("customerId") == customer_id and entry["id"] != queue["id"]
+                    for entry in active_provider_queues(provider_id)
+                ):
+                    raise ApiError(409, "This customer is already in the queue.")
+                now_utc = datetime.now(timezone.utc)
+                queue["status"] = "waiting"
+                queue["createdAt"] = now_utc.isoformat()
+                for field in ("startedAt", "completedAt", "endedAt", "removedAt", "removeReason", "carriedOver"):
+                    queue.pop(field, None)
+                active = active_provider_queues(provider_id)
+                wait_minutes = total_wait_minutes(provider, active)
+                queue["peopleAhead"] = len(active)
+                queue["wait"] = wait_minutes
+                queue["predictedWaitMinutes"] = wait_minutes
+                queue["predictedTurnAt"] = (now_utc + timedelta(minutes=wait_minutes)).isoformat()
+                queue["buffer"] = not entry_fits_capacity(
+                    provider, active, visit_minutes(provider, queue.get("service"))
+                )
+                log.info("queue.restore queue=%s provider=%s", queue["id"], provider["id"])
             store.put("queues", queue["id"], queue, queue)
-            log.info(
-                "queue.%s queue=%s provider=%s",
-                body["action"],
-                queue["id"],
-                provider["id"],
-            )
+            if body["action"] in {"complete", "remove"}:
+                promote_buffer_entries(provider)
+            if body["action"] != "remove":
+                log.info(
+                    "queue.%s queue=%s provider=%s",
+                    body["action"],
+                    queue["id"],
+                    provider["id"],
+                )
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers"))

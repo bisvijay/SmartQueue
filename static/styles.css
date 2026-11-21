@@ -289,7 +289,7 @@ h1, h2, h3, p { margin-top: 0; }
 .queue-filter { min-height: 32px; padding: 0 11px; border: 1px solid #e8ebe5; border-radius: 5px; background: white; color: #737d72; font: inherit; font-size: 9px; cursor: pointer; }
 .queue-filter.is-selected { border-color: #547a57; background: var(--accent-wash); color: var(--accent-mid); }
 .queue-filter:focus-visible { outline: 3px solid var(--accent-bright); outline-offset: 2px; }
-.queue-table-heading, .queue-table-row { display: grid; grid-template-columns: 1.7fr 1fr .55fr .75fr; gap: 10px; align-items: center; }
+.queue-table-heading, .queue-table-row { display: grid; grid-template-columns: 1.6fr .95fr .5fr .55fr .85fr; gap: 10px; align-items: center; }
 .queue-table-heading { padding: 0 0 9px 4px; border-bottom: 1px solid #eff0ed; color: #989e96; font-size: 8px; letter-spacing: .9px; }
 .queue-table-row { min-height: 62px; border-bottom: 1px solid #f0f1ee; }
 .queue-row-action { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
@@ -311,6 +311,14 @@ h1, h2, h3, p { margin-top: 0; }
 .next-up { background: var(--accent-wash); color: #547a57; }
 .waiting { background: #f3f4f1; color: #838b82; }
 .completed { background: var(--accent-wash); color: var(--accent-mid); }
+.buffer { background: #fdf3e0; color: #96690f; }
+.carried { background: #e8eef7; color: #47688f; }
+.removed { background: #f7e9e7; color: #96544c; }
+.predicted-cell { color: #59645a; font-size: 10px; }
+.queue-remove { margin-left: 5px; }
+.buffer-note { color: #96690f !important; }
+.checkbox-label { display: flex !important; align-items: flex-start; gap: 7px; }
+.checkbox-label input { width: auto !important; min-height: 0 !important; margin-top: 1px; }
 .queue-table-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; color: #848c82; font-size: 8px; }
 .queue-table-footer .button { min-height: 32px; font-size: 8px; }
 .no-waiting { padding: 30px 0; color: #7e887d; font-size: 11px; text-align: center; }
@@ -471,7 +479,7 @@ h1, h2, h3, p { margin-top: 0; }
   .metric-card > strong { font-size: 22px; }
   .provider-dashboard-grid { grid-template-columns: 1fr; }
   .dashboard-card { padding: 16px; }
-  .queue-table-heading, .queue-table-row { grid-template-columns: 1.5fr .9fr .5fr .7fr; }
+  .queue-table-heading, .queue-table-row { grid-template-columns: 1.4fr .85fr .45fr .5fr .75fr; gap: 6px; }
   .queue-row-action { flex-wrap: wrap; }
   .customer-cell { gap: 6px; }
   .customer-cell strong { font-size: 11px; }
@@ -497,7 +505,7 @@ h1, h2, h3, p { margin-top: 0; }
   .presentation-expanded .live-queue-card { padding: 10px; }
   .presentation-expanded .live-queue-card .dashboard-card-heading { margin-bottom: 8px; }
   .presentation-expanded .live-queue-card .queue-table-row { min-height: 48px; }
-  .presentation-expanded .queue-table-heading, .presentation-expanded .queue-table-row { grid-template-columns: 1fr .8fr .35fr 1fr; gap: 4px; }
+  .presentation-expanded .queue-table-heading, .presentation-expanded .queue-table-row { grid-template-columns: 1fr .75fr .3fr .45fr 1fr; gap: 4px; }
   /* 16px form text stops iOS Safari from auto-zooming on focus. */
   .registration-field input, .registration-field select,
   .public-walkin-form input, .public-walkin-form select,
@@ -667,6 +675,7 @@ html[data-theme="peacock"] {
 .view-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
 .view-toggle input { accent-color: var(--green); margin: 0; }
 .live-queue-card.hide-service .service-cell, .live-queue-card.hide-service .heading-service,
-.live-queue-card.hide-wait .wait-cell, .live-queue-card.hide-wait .heading-wait { display: none; }
+.live-queue-card.hide-wait .wait-cell, .live-queue-card.hide-wait .heading-wait,
+.live-queue-card.hide-predicted .predicted-cell, .live-queue-card.hide-predicted .heading-predicted { display: none; }
 .live-queue-card.hide-contact .customer-contact { display: none; }
 .queue-panel-service { margin: 2px 0 0; font-size: 12px; color: var(--muted); }

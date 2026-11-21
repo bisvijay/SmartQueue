@@ -1,4 +1,5 @@
 from io import BytesIO
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
@@ -1688,6 +1689,267 @@ class ApiTests(unittest.TestCase):
         register = self.client.get("/register?created=1")
         self.assertIn(b"Log in to NextInQueue", register.data)
         self.assertNotIn(b"will be added separately", register.data)
+
+    def relogin(self, identifier):
+        # After a logout the session CSRF token is regenerated; refresh the
+        # header token from a fresh page so it does not shadow the form token.
+        page = self.client.get("/login")
+        token = re.search(rb'name="csrf-token" content="([^"]+)"', page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = token
+        return self.login_account(identifier)
+
+    def fresh_csrf(self):
+        # After a logout the session has no CSRF token until a page is
+        # fetched; sync the header token so form posts are accepted again.
+        page = self.client.get("/register")
+        token = re.search(rb'name="csrf-token" content="([^"]+)"', page.data).group(1).decode()
+        self.client.environ_base["HTTP_X_CSRF_TOKEN"] = token
+
+    def day_zone(self):
+        # Pick a supported timezone whose local time is comfortably inside
+        # one day, so open/close windows computed from "now" never cross
+        # midnight during the test.
+        from zoneinfo import ZoneInfo
+
+        for name in ("Asia/Kolkata", "UTC", "Europe/London", "America/New_York", "America/Los_Angeles"):
+            local_now = datetime.now(ZoneInfo(name))
+            if 6 <= local_now.hour <= 16:
+                return name, local_now
+        raise AssertionError("No usable timezone found")
+
+    def set_provider_hours(self, provider_id, **overrides):
+        zone_name, local_now = self.day_zone()
+        settings = {
+            "openTime": (local_now - timedelta(hours=2)).strftime("%H:%M"),
+            "closeTime": (local_now + timedelta(hours=2)).strftime("%H:%M"),
+            "timezone": zone_name,
+            "bufferMinutes": 60,
+            "carryForwardQueue": False,
+        }
+        settings.update(overrides)
+        return self.client.patch(f"/api/providers/{provider_id}", json=settings)
+
+    def test_provider_day_settings_validation_and_dashboard(self):
+        provider_user = self.create_account("provider", "hours-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("hours-owner@example.com")
+
+        only_open = self.client.patch(f"/api/providers/{provider_id}", json={"openTime": "09:00"})
+        self.assertEqual(only_open.status_code, 400)
+        backwards = self.client.patch(
+            f"/api/providers/{provider_id}",
+            json={"openTime": "18:00", "closeTime": "09:00"},
+        )
+        self.assertEqual(backwards.status_code, 400)
+        bad_buffer = self.client.patch(f"/api/providers/{provider_id}", json={"bufferMinutes": 500})
+        self.assertEqual(bad_buffer.status_code, 400)
+
+        saved = self.set_provider_hours(provider_id)
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["bufferMinutes"], 60)
+        self.assertFalse(provider["carryForwardQueue"])
+        self.assertIn("openTime", provider)
+
+        page = self.client.get("/?view=provider")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Dequeued", page.data)
+        self.assertIn(b'name="openTime"', page.data)
+        self.assertIn(b'name="carryForwardQueue"', page.data)
+        self.assertIn(b"PREDICTED", page.data)
+        self.assertIn(b"data-i18n-name", page.data)
+
+    def test_capacity_buffer_waitlist_and_promotion(self):
+        provider_user = self.create_account("provider", "capacity-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("capacity-owner@example.com")
+        self.assertEqual(
+            self.client.patch(f"/api/providers/{provider_id}", json={"serviceDuration": 5}).status_code,
+            200,
+        )
+        zone_name, local_now = self.day_zone()
+        saved = self.client.patch(f"/api/providers/{provider_id}", json={
+            "openTime": (local_now - timedelta(hours=1)).strftime("%H:%M"),
+            "closeTime": (local_now + timedelta(minutes=13)).strftime("%H:%M"),
+            "timezone": zone_name,
+            "bufferMinutes": 0,
+        })
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        self.client.post("/logout")
+
+        queue_ids = []
+        for index in range(3):
+            email = f"capacity-customer-{index}@example.com"
+            self.fresh_csrf()
+            self.create_account("customer", email)
+            self.relogin(email)
+            joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+            self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+            queue_ids.append(joined.json["queue"]["id"])
+            if index < 2:
+                self.assertFalse(joined.json["queue"]["buffer"])
+            self.client.post("/logout")
+
+        # Third join exceeds today's remaining minutes: buffer waitlist.
+        third = self.store.get("queues", queue_ids[2])
+        self.assertTrue(third["buffer"])
+        self.assertIn("predictedTurnAt", third)
+
+        self.relogin("capacity-customer-2@example.com")
+        current = self.client.get("/api/queues/current")
+        self.assertTrue(current.json["queues"][0]["buffer"])
+        landing = self.client.get("/")
+        self.assertIn(b"BUFFER WAITLIST", landing.data)
+        self.assertIn(b"Predicted turn", landing.data)
+        self.client.post("/logout")
+
+        # Serving and completing the first customer frees capacity, and the
+        # buffer entry is promoted into the regular queue.
+        self.relogin("capacity-owner@example.com")
+        served = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_ids[0]}",
+            json={"action": "serve"},
+        )
+        self.assertEqual(served.status_code, 200, served.get_data(as_text=True))
+        completed = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_ids[0]}",
+            json={"action": "complete"},
+        )
+        self.assertEqual(completed.status_code, 200, completed.get_data(as_text=True))
+        self.assertFalse(self.store.get("queues", queue_ids[2])["buffer"])
+
+    def test_remove_restore_and_dequeued_tab(self):
+        provider_user = self.create_account("provider", "remove-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "remove-customer@example.com")
+        self.relogin("remove-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        queue_id = joined.json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.relogin("remove-owner@example.com")
+        removed = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_id}",
+            json={"action": "remove", "reason": "no_show"},
+        )
+        self.assertEqual(removed.status_code, 200, removed.get_data(as_text=True))
+        entry = self.store.get("queues", queue_id)
+        self.assertEqual(entry["status"], "no_show")
+        self.assertEqual(entry["removeReason"], "no_show")
+
+        dequeued = self.client.get(f"/api/providers/{provider_id}/queues?status=dequeued")
+        self.assertEqual([item["id"] for item in dequeued.json["queues"]], [queue_id])
+        active = self.client.get(f"/api/providers/{provider_id}/queues?status=active")
+        self.assertEqual(active.json["queues"], [])
+
+        restored = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_id}",
+            json={"action": "restore"},
+        )
+        self.assertEqual(restored.status_code, 200, restored.get_data(as_text=True))
+        self.assertEqual(self.store.get("queues", queue_id)["status"], "waiting")
+        active = self.client.get(f"/api/providers/{provider_id}/queues?status=active")
+        self.assertEqual([item["id"] for item in active.json["queues"]], [queue_id])
+
+    def test_day_rollover_clears_or_carries_waiting_entries(self):
+        from zoneinfo import ZoneInfo
+
+        provider_user = self.create_account("provider", "rollover-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("rollover-owner@example.com")
+        saved = self.set_provider_hours(provider_id, openTime="00:00", closeTime="23:59")
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        zone_name = self.store.get("providers", provider_id)["timezone"]
+        self.client.post("/logout")
+
+        self.fresh_csrf()
+        self.create_account("customer", "rollover-customer@example.com")
+        self.relogin("rollover-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        queue_id = joined.json["queue"]["id"]
+        self.client.post("/logout")
+
+        # Age the entry to yesterday in the provider's timezone.
+        entry = self.store.get("queues", queue_id)
+        joined_local = datetime.now(ZoneInfo(zone_name)) - timedelta(days=1)
+        entry["createdAt"] = joined_local.astimezone(timezone.utc).isoformat()
+        self.store.put("queues", queue_id, entry, entry)
+
+        self.relogin("rollover-owner@example.com")
+        dequeued = self.client.get(f"/api/providers/{provider_id}/queues?status=dequeued")
+        self.assertEqual([item["id"] for item in dequeued.json["queues"]], [queue_id])
+        self.assertEqual(dequeued.json["queues"][0]["removeReason"], "day_end")
+
+        # With carry-forward on, a stale entry stays in the queue, flagged.
+        restored = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_id}",
+            json={"action": "restore"},
+        )
+        self.assertEqual(restored.status_code, 200)
+        entry = self.store.get("queues", queue_id)
+        entry["createdAt"] = joined_local.astimezone(timezone.utc).isoformat()
+        self.store.put("queues", queue_id, entry, entry)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}",
+                json={"carryForwardQueue": True},
+            ).status_code,
+            200,
+        )
+        active = self.client.get(f"/api/providers/{provider_id}/queues?status=active")
+        self.assertEqual([item["id"] for item in active.json["queues"]], [queue_id])
+        self.assertTrue(active.json["queues"][0]["carriedOver"])
+
+    def test_measured_service_times_drive_predictions_and_are_logged(self):
+        provider_user = self.create_account("provider", "stats-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.create_account("customer", "stats-customer@example.com")
+
+        for _ in range(3):
+            self.relogin("stats-customer@example.com")
+            joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+            self.assertEqual(joined.status_code, 201)
+            self.assertEqual(joined.json["queue"]["predictedWaitMinutes"], 0)
+            queue_id = joined.json["queue"]["id"]
+            self.client.post("/logout")
+            self.relogin("stats-owner@example.com")
+            with self.assertLogs("smartqueue", level="INFO") as captured:
+                served = self.client.patch(
+                    f"/api/providers/{provider_id}/queues/{queue_id}",
+                    json={"action": "serve"},
+                )
+                self.assertEqual(served.status_code, 200)
+            messages = [record.getMessage() for record in captured.records]
+            self.assertTrue(any(m.startswith("queue.prediction_outcome") for m in messages))
+            completed = self.client.patch(
+                f"/api/providers/{provider_id}/queues/{queue_id}",
+                json={"action": "complete"},
+            )
+            self.assertEqual(completed.status_code, 200)
+            self.client.post("/logout")
+
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["serviceStats"]["Cut"]["count"], 3)
+        self.assertEqual(provider["overallStats"]["count"], 3)
+
+        # With three measured (near-instant) services, the estimate for the
+        # next Cut is the measured ~1 minute, not the configured 15.
+        self.relogin("stats-owner@example.com")
+        walk_in = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Walk In", "phone": "98765 43210", "service": "Cut",
+        })
+        self.assertEqual(walk_in.status_code, 201, walk_in.get_data(as_text=True))
+        self.relogin("stats-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        self.assertEqual(joined.status_code, 201)
+        self.assertEqual(joined.json["queue"]["predictedWaitMinutes"], 1)
+
+    def test_hindi_name_transliteration_assets(self):
+        script = self.client.get("/static/i18n.js")
+        self.assertEqual(script.status_code, 200)
+        self.assertIn(b"transliterateName", script.data)
+        self.assertIn(b"data-i18n-name", script.data)
+        self.assertIn("कुमार".encode(), script.data)
 
 
 

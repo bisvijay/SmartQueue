@@ -4,8 +4,10 @@
  * script translates visible UI text in place using the dictionary below and
  * keeps dynamically rendered content (queue rows, notices) translated via a
  * MutationObserver. The choice persists in localStorage. Business data such
- * as provider names, addresses, and service lists is never translated — only
- * exact UI strings and the parameterized patterns at the bottom.
+ * as addresses and service lists is never translated — only exact UI strings
+ * and the parameterized patterns at the bottom. Names marked with
+ * data-i18n-name (customer and business names) are transliterated into
+ * Devanagari script instead — see the transliteration section below.
  */
 (() => {
   "use strict";
@@ -123,8 +125,8 @@
     "Try another search or choose a different category.": "कोई और खोज आज़माएँ या दूसरी श्रेणी चुनें।",
     "Clear filters": "फ़िल्टर हटाएँ",
     "Add providers to the data store to see them here.": "यहाँ देखने के लिए डेटा स्टोर में प्रदाता जोड़ें।",
-    "Preview mode.": "पूर्वावलोकन मोड।",
-    "Queue counts begin with sample data; queue actions are saved to this server’s JSON data store.": "कतार की संख्या नमूना डेटा से शुरू होती है; कतार की कार्रवाइयाँ इस सर्वर के JSON डेटा स्टोर में सहेजी जाती हैं।",
+    "Live queues.": "लाइव कतारें।",
+    "Counts and wait times update as businesses serve their customers.": "जैसे-जैसे व्यवसाय अपने ग्राहकों को सेवा देते हैं, संख्या और प्रतीक्षा समय अपडेट होते रहते हैं।",
 
     // How it works
     "A BETTER KIND OF WAIT": "इंतज़ार का एक बेहतर तरीका",
@@ -143,7 +145,6 @@
     "Find a service": "सेवा खोजें",
     "For business": "व्यवसाय के लिए",
     "Provider dashboard": "प्रदाता डैशबोर्ड",
-    "Admin demo": "एडमिन डेमो",
     "Say hello": "संपर्क करें",
     "Contact us": "हमसे संपर्क करें",
     "Privacy & terms": "गोपनीयता और शर्तें",
@@ -209,6 +210,38 @@
     "Comma separated, up to 20 items (60 characters each)": "कॉमा से अलग करें, अधिकतम 20 आइटम (प्रत्येक 60 अक्षर)",
     "Opening hours": "खुलने का समय",
     "Average service time (minutes)": "औसत सेवा समय (मिनट)",
+    "Dequeued": "कतार से हटाए गए",
+    "Predicted": "अनुमानित",
+    "PREDICTED": "अनुमानित",
+    "Predicted turn": "अनुमानित बारी",
+    "Buffer waitlist": "बफ़र प्रतीक्षा सूची",
+    "BUFFER WAITLIST": "बफ़र प्रतीक्षा सूची",
+    "Carried over": "पिछले दिन से आए",
+    "Remove": "हटाएँ",
+    "Restore": "वापस लाएँ",
+    "No-show": "नहीं आए",
+    "Removed": "हटाया गया",
+    "Day ended": "दिन समाप्त",
+    "REMOVED": "हटाया गया",
+    "No dequeued customers.": "कोई हटाया गया ग्राहक नहीं है।",
+    "dequeued customer": "हटाया गया ग्राहक",
+    "dequeued customers": "हटाए गए ग्राहक",
+    "Your day": "आपका दिन",
+    "Set opening and closing times to switch on daily capacity limits, the buffer waitlist, and end-of-day queue handling.": "दैनिक क्षमता सीमा, बफ़र प्रतीक्षा सूची और दिन के अंत में कतार संभालने की सुविधा चालू करने के लिए खुलने और बंद होने का समय सेट करें।",
+    "Opening time": "खुलने का समय",
+    "Closing time": "बंद होने का समय",
+    "Timezone": "समय क्षेत्र",
+    "US Pacific": "अमेरिका प्रशांत",
+    "US Eastern": "अमेरिका पूर्वी",
+    "London": "लंदन",
+    "Daily buffer (minutes)": "दैनिक बफ़र (मिनट)",
+    "Extra service time beyond closing we can promise — covers no-shows and overruns. New joins past the limit join the buffer waitlist.": "बंद होने के समय के बाद का अतिरिक्त सेवा समय जो हम दे सकते हैं — नहीं आने वालों और देरी को संभालता है। सीमा के बाद जुड़ने वाले बफ़र प्रतीक्षा सूची में जाते हैं।",
+    "Carry yesterday’s waiting customers into the next day": "कल के प्रतीक्षारत ग्राहकों को अगले दिन ले जाएँ",
+    "Off: the queue clears at day end and those customers move to the Dequeued tab.": "बंद: दिन के अंत में कतार साफ़ हो जाती है और वे ग्राहक 'कतार से हटाए गए' टैब में चले जाते हैं।",
+    "You’re on the buffer waitlist — today’s regular queue is full. The shop will fit you in if time opens up, but a spot today isn’t guaranteed.": "आप बफ़र प्रतीक्षा सूची में हैं — आज की नियमित कतार भर चुकी है। समय मिलने पर दुकान आपको ले लेगी, लेकिन आज जगह की गारंटी नहीं है।",
+    "You’re on the buffer waitlist.": "आप बफ़र प्रतीक्षा सूची में हैं।",
+    "Today’s regular queue at": "आज की नियमित कतार",
+    "is full. The shop will fit you in if time opens up, but a spot today isn’t guaranteed.": "भर चुकी है। समय मिलने पर दुकान आपको ले लेगी, लेकिन आज जगह की गारंटी नहीं है।",
     "Time per service": "प्रत्येक सेवा का समय",
     "Minutes each service takes — used for wait estimates. Blank means the average above.": "प्रत्येक सेवा में लगने वाले मिनट — प्रतीक्षा अनुमान में उपयोग होते हैं। खाली छोड़ने पर ऊपर का औसत समय लागू होगा।",
     "Save settings": "सेटिंग सहेजें",
@@ -225,7 +258,7 @@
     "General service": "सामान्य सेवा",
     "Add to queue": "कतार में जोड़ें",
     "Walk-ins can be added after your listing is approved.": "आपकी लिस्टिंग स्वीकृत होने के बाद वॉक-इन जोड़े जा सकते हैं।",
-    "Queue and business settings are saved to this server’s local data store.": "कतार और व्यवसाय सेटिंग इस सर्वर के स्थानीय डेटा स्टोर में सहेजी जाती हैं।",
+    "Queue and business settings are saved to your NextInQueue account.": "कतार और व्यवसाय सेटिंग आपके NextInQueue खाते में सहेजी जाती हैं।",
     "Listing pending review": "लिस्टिंग समीक्षा लंबित है",
     "Listing approved": "लिस्टिंग स्वीकृत",
     "Listing rejected": "लिस्टिंग अस्वीकृत",
@@ -299,14 +332,15 @@
     "Choose a category": "श्रेणी चुनें",
     "Business address": "व्यवसाय का पता",
     "(optional, comma-separated)": "(वैकल्पिक, कॉमा से अलग)",
-    "By creating an account, you agree to use this local NextInQueue demo. Passwords are stored as salted hashes.": "खाता बनाकर, आप इस स्थानीय NextInQueue डेमो का उपयोग करने के लिए सहमत होते हैं। पासवर्ड सॉल्टेड हैश के रूप में संग्रहीत होते हैं।",
+    "By creating an account, you agree to our": "खाता बनाकर, आप हमारी",
+    "Privacy & Terms": "गोपनीयता और शर्तों",
 
     // Password reset
     "ACCOUNT RECOVERY": "खाता पुनर्प्राप्ति",
     "Check your": "अपना खाता",
     "account.": "देखें।",
     "If those contact details match an account, its password has been updated. You can try logging in now.": "यदि वे संपर्क विवरण किसी खाते से मेल खाते हैं, तो उसका पासवर्ड बदल दिया गया है। अब आप लॉग इन करके देख सकते हैं।",
-    "This local demo checks both registered email and phone. Contact details are not verified; use a trusted environment only.": "यह स्थानीय डेमो पंजीकृत ईमेल और फ़ोन दोनों की जांच करता है। संपर्क विवरण सत्यापित नहीं होते; केवल विश्वसनीय वातावरण में उपयोग करें।",
+    "For your security, a reset needs both the email address and the phone number on the account.": "आपकी सुरक्षा के लिए, रीसेट के लिए खाते का ईमेल पता और फ़ोन नंबर दोनों चाहिए।",
     "Return to log in": "लॉग इन पर वापस जाएँ",
     "Reset your": "अपना पासवर्ड",
     "password.": "रीसेट करें।",
@@ -374,8 +408,170 @@
 
   const textOriginals = new Map();
   const attrOriginals = new Map();
+  const nameOriginals = new Map();
   let titleOriginal = null;
   let applying = false;
+
+  // ---- Name transliteration (Latin -> Devanagari) ----
+  // When Hindi is selected, elements marked data-i18n-name (customer names,
+  // business names) are shown in Devanagari. This is a best-effort,
+  // rule-based transliteration for Indian names written in Latin letters;
+  // text that already contains Devanagari is left unchanged.
+  const NAME_CONS = {
+    kh: "ख", gh: "घ", ch: "च", chh: "छ", jh: "झ", th: "थ", dh: "ध",
+    ph: "फ", bh: "भ", sh: "श",
+    k: "क", g: "ग", j: "ज", t: "त", d: "द", n: "न", p: "प", b: "ब",
+    m: "म", y: "य", r: "र", l: "ल", v: "व", w: "व", s: "स", h: "ह",
+    f: "फ़", q: "क़", x: "क्स", z: "ज़",
+  };
+  const NAME_CONS_TOKENS = ["chh", "kh", "gh", "ch", "jh", "th", "dh", "ph", "bh", "sh",
+    "k", "g", "j", "t", "d", "n", "p", "b", "m", "y", "r", "l", "v", "w", "s", "h", "f", "q", "x", "z", "c"];
+  const NAME_VOWEL_TOKENS = ["aa", "ee", "ii", "oo", "uu", "ai", "au", "ou", "a", "e", "i", "o", "u"];
+  const NAME_VOWEL_INDEP = { a: "अ", aa: "आ", e: "ए", ee: "ई", i: "इ", ii: "ई", o: "ओ", oo: "ऊ", uu: "ऊ", u: "उ", ai: "ऐ", au: "औ", ou: "औ" };
+  const NAME_VOWEL_MATRA = { a: "", aa: "ा", e: "े", ee: "ी", i: "ि", ii: "ी", o: "ो", oo: "ू", uu: "ू", u: "ु", ai: "ै", au: "ौ", ou: "ौ" };
+  // A nasal before one of these consonants is written as anusvara (ं):
+  // Santosh -> संतोष, Chandra -> चंद्रा. Before semivowels it stays a
+  // conjunct: Ananya -> अनन्या.
+  const NAME_ANUSVARA_BEFORE = new Set(["k", "kh", "g", "gh", "ch", "chh", "j", "jh",
+    "t", "th", "d", "dh", "p", "ph", "b", "bh", "s", "sh"]);
+  // Consonants that form a conjunct (virama) before r / y / l:
+  // Vikram -> विक्रम, Priya -> प्रिया, Shukla -> शुक्ला. Other consonant
+  // pairs keep the inherent vowel: Imran -> इमरान, Gupta -> गुप्ता.
+  const NAME_CONJUNCT_FIRST = new Set(["k", "kh", "g", "gh", "ch", "chh", "j", "jh",
+    "t", "th", "d", "dh", "n", "p", "ph", "b", "bh", "sh", "s"]);
+  // Exact spellings for very common names the rules cannot infer (long
+  // vowels and silent letters are not visible in the Latin spelling).
+  const NAME_COMMON = {
+    rahul: "राहुल", yadav: "यादव", verma: "वर्मा", anand: "आनंद", rani: "रानी",
+    ravi: "रवि", shashi: "शशि", bibi: "बीबी", sunil: "सुनील", nair: "नायर",
+    iyer: "अय्यर", menon: "मेनन", pillai: "पिल्लई", shetty: "शेट्टी",
+    gowda: "गौड़ा", rao: "राव", roy: "रॉय", shaikh: "शेख", sheikh: "शेख",
+    krishna: "कृष्ण", vishnu: "विष्णु", saraswati: "सरस्वती", reddy: "रेड्डी",
+    malhotra: "मल्होत्रा", chopra: "चोपड़ा", agarwal: "अग्रवाल", arora: "अरोड़ा",
+    bhatia: "भाटिया", mohan: "मोहन", kiran: "किरण", kumari: "कुमारी",
+    tiwari: "तिवारी", rajesh: "राजेश", ramesh: "रामेश", sita: "सीता",
+    kriti: "कृति", alia: "आलिया", bajpayee: "बाजपेयी", shastri: "शास्त्री",
+    swati: "स्वाती", aditya: "आदित्य", tripathi: "त्रिपाठी",
+    nagarjuna: "नागार्जुन", santosh: "संतोष", bhatt: "भट्ट", prasad: "प्रसाद",
+    akhtar: "अख़्तर", ram: "राम", bhakti: "भक्ति", patel: "पटेल",
+    sunita: "सुनीता", babu: "बाबू", raja: "राजा", rajan: "राजन",
+    shruti: "श्रुति", krishnan: "कृष्णन",
+  };
+  // Specific two-consonant conjuncts outside the r / y / l pattern:
+  // Gupta (pt), Astha (sth), Bhakti (kt), Swati (sw).
+  const NAME_CONJUNCT_PAIRS = new Set(["pt", "st", "sth", "kt", "sw"]);
+  // "a" before one of these as the final consonant is usually long:
+  // Kumar -> कुमार, Khan -> खान. Before other consonants it stays short:
+  // Vijay -> विजय, Vikram -> विक्रम, Deepak -> दीपक.
+  const NAME_LONG_A_BEFORE = new Set(["r", "n", "l", "s", "sh", "kh", "gh", "th", "dh", "bh", "ch", "jh", "h"]);
+
+  function matchNameToken(word, index, tokens) {
+    for (const token of tokens) {
+      if (word.startsWith(token, index)) return token;
+    }
+    return null;
+  }
+
+  function transliterateWord(word) {
+    if (NAME_COMMON[word]) return NAME_COMMON[word];
+    let out = "";
+    let i = 0;
+    while (i < word.length) {
+      if (word.startsWith("ngh", i)) {
+        out += "ंह";
+        i += 3;
+        continue;
+      }
+      if (word.startsWith("ksh", i)) {
+        out += "क्ष";
+        i += 3;
+        const vowel = matchNameToken(word, i, NAME_VOWEL_TOKENS);
+        if (vowel) {
+          out += NAME_VOWEL_MATRA[vowel];
+          i += vowel.length;
+        } else if (i < word.length) {
+          out += "्";
+        }
+        continue;
+      }
+      const cons = matchNameToken(word, i, NAME_CONS_TOKENS);
+      if (cons) {
+        const nextCons = matchNameToken(word, i + cons.length, NAME_CONS_TOKENS);
+        if ((cons === "n" || cons === "m") && nextCons && NAME_ANUSVARA_BEFORE.has(nextCons)) {
+          out += "ं";
+          i += cons.length;
+          continue;
+        }
+        const base = cons === "c"
+          ? (/[eiy]/.test(word[i + 1] || "") ? "स" : "क")
+          : NAME_CONS[cons];
+        i += cons.length;
+        const vowel = matchNameToken(word, i, NAME_VOWEL_TOKENS);
+        if (vowel) {
+          let matra = NAME_VOWEL_MATRA[vowel];
+          i += vowel.length;
+          if (i >= word.length) {
+            // A name-final a / i / u is usually long: Gupta -> गुप्ता,
+            // Devi -> देवी, Sonu -> सोनू.
+            if (vowel === "a") matra = "ा";
+            else if (vowel === "i") matra = "ी";
+            else if (vowel === "u") matra = "ू";
+          } else if (vowel === "a") {
+            const lastCons = matchNameToken(word, i, NAME_CONS_TOKENS);
+            if (lastCons && i + lastCons.length === word.length && NAME_LONG_A_BEFORE.has(lastCons)) {
+              matra = "ा";
+            }
+          }
+          out += base + matra;
+        } else if (i >= word.length) {
+          out += base;
+        } else if (
+          cons === "r" || nextCons === cons
+          || NAME_CONJUNCT_PAIRS.has(cons + (nextCons || ""))
+          || (NAME_CONJUNCT_FIRST.has(cons) && (nextCons === "r" || nextCons === "l"))
+          || ((NAME_CONJUNCT_FIRST.has(cons) || cons === "m" || cons === "v") && nextCons === "y")
+        ) {
+          out += base + "्";
+        } else {
+          out += base;
+        }
+        continue;
+      }
+      const vowel = matchNameToken(word, i, NAME_VOWEL_TOKENS);
+      if (vowel) {
+        out += NAME_VOWEL_INDEP[vowel];
+        i += vowel.length;
+        continue;
+      }
+      out += word[i];
+      i += 1;
+    }
+    return out;
+  }
+
+  function transliterateName(text) {
+    if (!text || /[ऀ-ॿ]/.test(text)) return text;
+    return text
+      .split(/(\s+)/)
+      .map((part) => (/^[A-Za-z][A-Za-z'’.-]*$/.test(part) ? transliterateWord(part.toLowerCase()) : part))
+      .join("");
+  }
+
+  function transliterateNameElements(root) {
+    if (current !== "hi") return;
+    const scope = root && root.nodeType === Node.ELEMENT_NODE ? root : document.body;
+    if (!scope) return;
+    const elements = [];
+    if (scope.matches && scope.matches("[data-i18n-name]")) elements.push(scope);
+    if (scope.querySelectorAll) {
+      scope.querySelectorAll("[data-i18n-name]").forEach((element) => elements.push(element));
+    }
+    for (const element of elements) {
+      if (!nameOriginals.has(element)) nameOriginals.set(element, element.textContent);
+      const converted = transliterateName(nameOriginals.get(element));
+      if (converted && converted !== element.textContent) element.textContent = converted;
+    }
+  }
 
   function translateString(text) {
     const trimmed = text.trim();
@@ -402,6 +598,8 @@
       if (SKIP_TAGS.has(element.tagName)) return true;
       if (element.classList && element.classList.contains("language-picker-wrap")) return true;
       if (element.hasAttribute && (element.hasAttribute("data-no-i18n") || element.getAttribute("translate") === "no")) return true;
+      // Names are transliterated, never dictionary-translated.
+      if (element.hasAttribute && element.hasAttribute("data-i18n-name")) return true;
       element = element.parentElement;
     }
     return false;
@@ -433,6 +631,10 @@
     if (!root) return;
     if (root.nodeType === Node.TEXT_NODE) {
       translateTextNode(root);
+      const nameHost = root.parentElement && root.parentElement.closest
+        ? root.parentElement.closest("[data-i18n-name]")
+        : null;
+      if (nameHost) transliterateNameElements(nameHost);
       return;
     }
     if (root.nodeType !== Node.ELEMENT_NODE && root !== document) return;
@@ -444,6 +646,7 @@
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) translateTextNode(node);
     scope.querySelectorAll("[placeholder], [title], [aria-label]").forEach(translateAttributes);
+    transliterateNameElements(scope);
   }
 
   function restoreOriginals() {
@@ -451,6 +654,10 @@
       if (node.isConnected) node.nodeValue = value;
     }
     textOriginals.clear();
+    for (const [element, value] of nameOriginals) {
+      if (element.isConnected) element.textContent = value;
+    }
+    nameOriginals.clear();
     for (const [element, saved] of attrOriginals) {
       if (!element.isConnected) continue;
       for (const [attr, value] of Object.entries(saved)) element.setAttribute(attr, value);
