@@ -246,8 +246,19 @@ def create_app(test_config=None):
             return max(1, int(provider.get("serviceDuration", 15)))
         return sum(effective_service_minutes(provider, name) for name in names)
 
+    def provider_staff_limit(provider):
+        """How many customers can be served at the same time: one per staff
+        member, chair, or counter. Defaults to 1."""
+        try:
+            return max(1, min(20, int(provider.get("staffCount") or 1)))
+        except (TypeError, ValueError):
+            return 1
+
     def total_wait_minutes(provider, entries):
-        return sum(visit_minutes(provider, entry.get("service")) for entry in entries)
+        total = sum(visit_minutes(provider, entry.get("service")) for entry in entries)
+        # Staff serve in parallel, so the wall-clock wait is the total work
+        # divided across them.
+        return -(-total // provider_staff_limit(provider))
 
     def provider_timezone(provider):
         name = provider.get("timezone")
@@ -291,8 +302,9 @@ def create_app(test_config=None):
 
     def capacity_limit_minutes(provider, local_now=None):
         """Minutes of service the provider can still take today: the time
-        left until closing plus the daily buffer. None means no limit
-        (the provider has not set opening/closing times)."""
+        left until closing, multiplied by the staff serving in parallel,
+        plus the daily buffer. None means no limit (the provider has not
+        set opening/closing times)."""
         window = provider_day_window(provider, local_now)
         if window is None:
             return None
@@ -303,7 +315,7 @@ def create_app(test_config=None):
             buffer_minutes = int(provider.get("bufferMinutes", 60))
         except (TypeError, ValueError):
             buffer_minutes = 60
-        return int(remaining) + max(0, min(240, buffer_minutes))
+        return int(remaining) * provider_staff_limit(provider) + max(0, min(240, buffer_minutes))
 
     def committed_minutes(provider, entries):
         """Minutes already promised: everyone being served plus the regular
@@ -459,6 +471,7 @@ def create_app(test_config=None):
             for entry in entries
             if entry.get("status") == "serving"
         )
+        staff = provider_staff_limit(provider)
         ahead_minutes = 0
         now_utc = datetime.now(timezone.utc)
         visible_entries = []
@@ -479,7 +492,7 @@ def create_app(test_config=None):
             if entry.get("status") == "serving":
                 visible["estimatedWait"] = 0
             elif entry.get("status") == "waiting":
-                visible["estimatedWait"] = serving_minutes + ahead_minutes
+                visible["estimatedWait"] = -(-(serving_minutes + ahead_minutes) // staff)
                 ahead_minutes += visible["duration"]
                 turn = now_utc + timedelta(minutes=visible["estimatedWait"])
                 visible["predictedTurnAt"] = turn.isoformat()
@@ -835,7 +848,10 @@ def create_app(test_config=None):
             provider = provider_with_contact(provider)
             provider["approvalStatus"] = provider_approval_status(provider)
             provider_queue = provider_queue_view(provider)
-            service_in_progress = any(entry.get("status") == "serving" for entry in provider_queue)
+            serving_slots_full = (
+                sum(1 for entry in provider_queue if entry.get("status") == "serving")
+                >= provider_staff_limit(provider)
+            )
             provider = refresh_provider_metrics(provider)
         if view == "admin":
             for item in all_providers:
@@ -848,7 +864,7 @@ def create_app(test_config=None):
             view=view,
             provider=provider,
             provider_queue=provider_queue,
-            service_in_progress=service_in_progress if view == "provider" else False,
+            serving_slots_full=serving_slots_full if view == "provider" else False,
             admin_providers=all_providers if view == "admin" else [],
             provider_categories=PROVIDER_CATEGORIES,
             provider_timezones=PROVIDER_TIMEZONES,
@@ -1087,6 +1103,7 @@ def create_app(test_config=None):
                     "timezone": DEFAULT_PROVIDER_TIMEZONE,
                     "bufferMinutes": 60,
                     "carryForwardQueue": False,
+                    "staffCount": 1,
                     "accent": accent,
                     "icon": icon,
                     "services": services,
@@ -1246,6 +1263,119 @@ def create_app(test_config=None):
             raise ApiError(400, "Choose active, completed, or dequeued services.")
         return jsonify(queues=provider_queue_view(provider, entries))
 
+    @app.get("/api/providers/<provider_id>/reports")
+    def provider_reports(provider_id):
+        _, provider = require_owned_provider(provider_id)
+        period = request.args.get("period", "day")
+        if period not in {"day", "week", "month", "all"}:
+            raise ApiError(400, "Choose a day, week, month, or all report.")
+        local_now = provider_local_now(provider)
+        if period == "day":
+            start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_local = start_local + timedelta(days=1)
+            label = f"Today · {start_local.strftime('%d %b %Y')}"
+        elif period == "week":
+            start_local = (local_now - timedelta(days=local_now.weekday())).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            end_local = start_local + timedelta(days=7)
+            label = (
+                f"This week · {start_local.strftime('%d %b')} – "
+                f"{(end_local - timedelta(days=1)).strftime('%d %b %Y')}"
+            )
+        elif period == "month":
+            start_local = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end_local = (start_local + timedelta(days=32)).replace(day=1)
+            label = local_now.strftime("%B %Y")
+        else:
+            start_local = end_local = None
+            label = "All time"
+        start_utc = start_local.astimezone(timezone.utc) if start_local else None
+        end_utc = end_local.astimezone(timezone.utc) if end_local else None
+
+        def in_window(value):
+            if not isinstance(value, str) or not value:
+                return False
+            try:
+                moment = datetime.fromisoformat(value)
+            except ValueError:
+                return False
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            if start_utc and moment < start_utc:
+                return False
+            if end_utc and moment >= end_utc:
+                return False
+            return True
+
+        entries = [
+            entry for entry in store.list("queues")
+            if str(entry.get("providerId")) == str(provider_id)
+        ]
+        completed = [
+            entry for entry in entries
+            if entry.get("status") == "completed" and in_window(entry.get("completedAt"))
+        ]
+        service_counts = {}
+        service_durations = {}
+        durations = []
+        waits = []
+        for entry in completed:
+            names = service_names(entry.get("service"))
+            for name in names:
+                service_counts[name] = service_counts.get(name, 0) + 1
+            started, finished, created = entry.get("startedAt"), entry.get("completedAt"), entry.get("createdAt")
+            if not (started and finished):
+                continue
+            try:
+                duration = (datetime.fromisoformat(finished) - datetime.fromisoformat(started)).total_seconds() / 60
+            except ValueError:
+                continue
+            if duration < 0:
+                continue
+            durations.append(duration)
+            if len(names) == 1:
+                service_durations.setdefault(names[0], []).append(duration)
+            if created:
+                try:
+                    waited = (datetime.fromisoformat(started) - datetime.fromisoformat(created)).total_seconds() / 60
+                except ValueError:
+                    waited = None
+                if waited is not None and waited >= 0:
+                    waits.append(waited)
+        removed_counts = {"no_show": 0, "removed": 0, "day_end": 0}
+        for entry in entries:
+            if entry.get("status") != "no_show":
+                continue
+            if not in_window(entry.get("endedAt") or entry.get("removedAt")):
+                continue
+            reason = entry.get("removeReason")
+            removed_counts[reason if reason in removed_counts else "no_show"] += 1
+        services = [
+            {
+                "name": name,
+                "count": count,
+                "avgMinutes": (
+                    round(sum(service_durations[name]) / len(service_durations[name]))
+                    if service_durations.get(name) else None
+                ),
+            }
+            for name, count in sorted(service_counts.items(), key=lambda item: (-item[1], item[0]))
+        ]
+        return jsonify(report={
+            "period": period,
+            "label": label,
+            "served": len(completed),
+            "joined": sum(1 for entry in entries if in_window(entry.get("createdAt"))),
+            "noShows": removed_counts["no_show"],
+            "removed": removed_counts["removed"],
+            "clearedDayEnd": removed_counts["day_end"],
+            "avgWaitMinutes": round(sum(waits) / len(waits)) if waits else 0,
+            "avgServiceMinutes": round(sum(durations) / len(durations)) if durations else 0,
+            "totalServiceMinutes": round(sum(durations)),
+            "services": services,
+        })
+
     @app.get("/api/queues/current")
     def current_queue():
         user = require_user("customer")
@@ -1277,10 +1407,14 @@ def create_app(test_config=None):
             active = active_provider_queues(queue["providerId"])
             position = next((index for index, entry in enumerate(active) if entry["id"] == queue["id"]), None)
             wait = total_wait_minutes(provider, active[:position]) if position is not None else 0
+            people_ahead = (
+                sum(1 for entry in active[:position] if entry.get("status") == "waiting")
+                if position is not None else 0
+            )
             enriched.append({
                 **queue,
                 "buffer": bool(queue.get("buffer")),
-                "peopleAhead": max(0, (position or 0) - (1 if queue.get("status") == "serving" else 0)),
+                "peopleAhead": people_ahead,
                 "wait": wait,
                 "position": "Now" if queue.get("status") == "serving" else (position + 1 if position is not None else None),
                 "predictedTurnAt": (
@@ -1405,9 +1539,10 @@ def create_app(test_config=None):
             store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
             ensure_provider_approved(provider)
-            if any(queue.get("status") == "serving" for queue in active_provider_queues(provider_id)):
-                raise ApiError(409, "Complete the current service before starting another.")
-            waiting = [entry for entry in active_provider_queues(provider_id) if entry.get("status") == "waiting"]
+            active = active_provider_queues(provider_id)
+            if sum(1 for queue in active if queue.get("status") == "serving") >= provider_staff_limit(provider):
+                raise ApiError(409, "All your staff are busy. Complete a service before starting another.")
+            waiting = [entry for entry in active if entry.get("status") == "waiting"]
             if not waiting:
                 raise ApiError(409, "There are no waiting customers.")
             entry = waiting[0]
@@ -1518,7 +1653,7 @@ def create_app(test_config=None):
         allowed = {
             "status", "name", "category", "address", "description", "services", "hours",
             "serviceDuration", "serviceDurations", "contactEmail", "contactPhone",
-            "openTime", "closeTime", "timezone", "bufferMinutes", "carryForwardQueue",
+            "openTime", "closeTime", "timezone", "bufferMinutes", "carryForwardQueue", "staffCount",
         }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
@@ -1620,6 +1755,11 @@ def create_app(test_config=None):
                 if not isinstance(buffer_minutes, int) or isinstance(buffer_minutes, bool) or not 0 <= buffer_minutes <= 240:
                     raise ApiError(400, "Buffer minutes must be between 0 and 240.")
                 provider["bufferMinutes"] = buffer_minutes
+            if "staffCount" in body:
+                staff_count = body["staffCount"]
+                if not isinstance(staff_count, int) or isinstance(staff_count, bool) or not 1 <= staff_count <= 20:
+                    raise ApiError(400, "Staff count must be a whole number between 1 and 20.")
+                provider["staffCount"] = staff_count
             if "carryForwardQueue" in body:
                 if not isinstance(body["carryForwardQueue"], bool):
                     raise ApiError(400, "Carry-forward must be true or false.")
@@ -1666,8 +1806,8 @@ def create_app(test_config=None):
                 ensure_provider_approved(provider)
                 if queue.get("status") != "waiting":
                     raise ApiError(409, "Only waiting customers can be started.")
-                if any(entry.get("status") == "serving" for entry in active_provider_queues(provider_id)):
-                    raise ApiError(409, "Complete the current service before starting another.")
+                if sum(1 for entry in active_provider_queues(provider_id) if entry.get("status") == "serving") >= provider_staff_limit(provider):
+                    raise ApiError(409, "All your staff are busy. Complete a service before starting another.")
                 queue["status"] = "serving"
                 queue["startedAt"] = datetime.now(timezone.utc).isoformat()
                 record_prediction_outcome(queue)

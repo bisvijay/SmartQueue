@@ -365,6 +365,16 @@ h1, h2, h3, p { margin-top: 0; }
 .login-register-link a { color: var(--accent-text); font-weight: 700; }
 .reset-security-note { margin: 14px 0 0; padding: 11px 12px; border-radius: 5px; background: #f7f2e7; color: #756d55; font-size: 9px; line-height: 1.5; }
 .dashboard-disclaimer { margin-top: 18px; color: #979d95; font-size: 8px; }
+.reports-card { margin-top: 18px; }
+.report-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; margin: 14px 0 6px; }
+.report-stat { padding: 12px 13px; border: 1px solid #e8ebe5; border-radius: 7px; background: #fbfcfa; }
+.report-stat span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.report-stat strong { display: block; margin-top: 4px; font-size: 19px; color: var(--ink); }
+.report-services { margin-top: 8px; }
+.report-service-row { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 7px 2px; border-top: 1px solid #eef0ea; font-size: 12px; }
+.report-service-row span:nth-child(2), .report-service-row span:nth-child(3) { min-width: 74px; text-align: right; }
+.report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.report-empty { color: var(--muted); font-size: 12px; }
 .admin-provider-list { padding: 22px; }
 .admin-table-heading, .admin-table-row { display: grid; grid-template-columns: 1.8fr 1fr 1fr .7fr; align-items: center; gap: 15px; }
 .admin-table-heading { padding: 5px 0 10px; border-bottom: 1px solid #ecefea; color: #989e96; font-size: 7px; letter-spacing: .9px; }

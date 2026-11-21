@@ -265,6 +265,7 @@
     const peopleMetric = document.querySelector("#provider-people-metric");
     const waitMetric = document.querySelector("#provider-wait-metric");
     const serviceDuration = Number(providerPage.dataset.serviceDuration) || 15;
+    const staffCount = Number(providerPage.dataset.staffCount) || 1;
     const presentationButton = document.querySelector("#toggle-presentation");
     const queueFilterHeading = document.querySelector(".heading-wait");
     let activeQueueFilter = "active";
@@ -295,7 +296,8 @@
       queueRows.replaceChildren();
       const showingCompleted = filter === "completed";
       const showingDequeued = filter === "dequeued";
-      const serving = queues.some((entry) => entry.status === "serving");
+      const servingCount = queues.filter((entry) => entry.status === "serving").length;
+      const slotsFull = servingCount >= staffCount;
       let visibleCount = 0;
       for (const [index, entry] of queues.entries()) {
         if (activeServiceFilter !== "all" && !(entry.customerService || "").split(", ").includes(activeServiceFilter)) continue;
@@ -359,7 +361,7 @@
           button.type = "button";
           button.dataset.action = "serve";
           button.dataset.queueId = entry.id;
-          button.disabled = serving;
+          button.disabled = slotsFull;
           const removeButton = appendText(action, "button", "button button-outline queue-action queue-remove", "Remove");
           removeButton.type = "button";
           removeButton.dataset.action = "remove";
@@ -384,8 +386,8 @@
       callNextButton.hidden = showingCompleted || showingDequeued;
       if (!showingCompleted && !showingDequeued) {
         peopleMetric.textContent = queues.length;
-        waitMetric.textContent = `${queues.reduce((total, queue) => total + (queue.duration || serviceDuration), 0)} min`;
-        callNextButton.disabled = queues.length === 0 || serving;
+        waitMetric.textContent = `${Math.ceil(queues.reduce((total, queue) => total + (queue.duration || serviceDuration), 0) / staffCount)} min`;
+        callNextButton.disabled = queues.length === 0 || slotsFull;
       }
     }
 
@@ -577,6 +579,7 @@
             services: values.get("services").split(",").map((service) => service.trim()).filter(Boolean),
             hours: values.get("hours"),
             serviceDuration: Number(values.get("serviceDuration")),
+            staffCount: Number(values.get("staffCount")),
             serviceDurations,
             openTime: values.get("openTime") || "",
             closeTime: values.get("closeTime") || "",
@@ -590,6 +593,69 @@
         showError(error.message);
       }
     });
+    const reportsCard = document.querySelector("#reports-card");
+    if (reportsCard) {
+      const reportStats = reportsCard.querySelector("#report-stats");
+      const reportServices = reportsCard.querySelector("#report-services");
+      const reportLabel = reportsCard.querySelector("#report-label");
+      const reportButtons = [...reportsCard.querySelectorAll("[data-report-period]")];
+      async function loadReport(period) {
+        reportButtons.forEach((button) => {
+          const selected = button.dataset.reportPeriod === period;
+          button.classList.toggle("is-selected", selected);
+          button.setAttribute("aria-pressed", String(selected));
+        });
+        try {
+          const response = await api(`/api/providers/${encodeURIComponent(providerId)}/reports?period=${period}`);
+          const report = response.report;
+          reportLabel.textContent = report.label;
+          reportStats.replaceChildren();
+          const stats = [
+            ["Customers served", report.served],
+            ["Joined the queue", report.joined],
+            ["No-shows", report.noShows],
+            ["Removed", report.removed],
+            ["Cleared at day end", report.clearedDayEnd],
+            ["Average wait", `${report.avgWaitMinutes} min`],
+            ["Average service", `${report.avgServiceMinutes} min`],
+            ["Total service time", `${report.totalServiceMinutes} min`],
+          ];
+          for (const [label, value] of stats) {
+            const box = document.createElement("div");
+            box.className = "report-stat";
+            appendText(box, "span", "", label);
+            appendText(box, "strong", "", String(value));
+            reportStats.append(box);
+          }
+          reportServices.replaceChildren();
+          if (!report.services.length) {
+            appendText(reportServices, "p", "report-empty", "No completed services in this period yet.");
+          } else {
+            const head = document.createElement("div");
+            head.className = "report-service-row report-service-head";
+            appendText(head, "span", "", "Service");
+            appendText(head, "span", "", "Times done");
+            appendText(head, "span", "", "Avg. time");
+            reportServices.append(head);
+            for (const service of report.services) {
+              const row = document.createElement("div");
+              row.className = "report-service-row";
+              appendText(row, "span", "", service.name);
+              appendText(row, "span", "", String(service.count));
+              appendText(row, "span", "", service.avgMinutes === null ? "—" : `${service.avgMinutes} min`);
+              reportServices.append(row);
+            }
+          }
+        } catch (error) {
+          showError(error.message);
+        }
+      }
+      reportButtons.forEach((button) => {
+        button.addEventListener("click", () => loadReport(button.dataset.reportPeriod));
+      });
+      loadReport("day");
+    }
+
     window.setInterval(refreshProviderQueue, 10000);
   }
 

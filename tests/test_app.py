@@ -1951,6 +1951,135 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"data-i18n-name", script.data)
         self.assertIn("कुमार".encode(), script.data)
 
+    def test_multi_staff_serving_up_to_staff_count(self):
+        provider_user = self.create_account("provider", "staff-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        queue_ids = []
+        for index in range(3):
+            email = f"staff-customer-{index}@example.com"
+            self.fresh_csrf()
+            self.create_account("customer", email)
+            self.relogin(email)
+            joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+            self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+            queue_ids.append(joined.json["queue"]["id"])
+            self.client.post("/logout")
+
+        def serve(queue_id):
+            return self.client.patch(
+                f"/api/providers/{provider_id}/queues/{queue_id}",
+                json={"action": "serve"},
+            )
+
+        self.relogin("staff-owner@example.com")
+        # Default is one at a time.
+        self.assertEqual(serve(queue_ids[0]).status_code, 200)
+        blocked = serve(queue_ids[1])
+        self.assertEqual(blocked.status_code, 409)
+        self.assertIn("All your staff are busy", blocked.get_data(as_text=True))
+
+        # Staff count validates and persists.
+        self.assertEqual(
+            self.client.patch(f"/api/providers/{provider_id}", json={"staffCount": 0}).status_code, 400
+        )
+        self.assertEqual(
+            self.client.patch(f"/api/providers/{provider_id}", json={"staffCount": 21}).status_code, 400
+        )
+        saved = self.client.patch(f"/api/providers/{provider_id}", json={"staffCount": 2})
+        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
+        self.assertEqual(self.store.get("providers", provider_id)["staffCount"], 2)
+
+        # Two can now be served in parallel; the third still waits.
+        self.assertEqual(serve(queue_ids[1]).status_code, 200)
+        self.assertEqual(serve(queue_ids[2]).status_code, 409)
+        call_next = self.client.post(f"/api/providers/{provider_id}/call-next")
+        self.assertEqual(call_next.status_code, 409)
+
+        # Completing one frees a slot for the third customer.
+        completed = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{queue_ids[0]}",
+            json={"action": "complete"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(serve(queue_ids[2]).status_code, 200)
+
+        page = self.client.get("/?view=provider")
+        self.assertIn(b'name="staffCount"', page.data)
+        self.assertIn(b'data-staff-count="2"', page.data)
+        self.assertIn(b'id="reports-card"', page.data)
+
+    def test_multi_staff_migration_drops_one_serving_index(self):
+        migration = Path("migrations/003_multi_staff_serving.sql").read_text()
+        self.assertIn("DROP INDEX IF EXISTS queue_one_serving_visit_per_provider", migration)
+
+    def test_provider_reports_periods_and_services(self):
+        provider_user = self.create_account("provider", "reports-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+
+        self.fresh_csrf()
+        self.create_account("customer", "reports-customer-a@example.com")
+        self.relogin("reports-customer-a@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        served_id = joined.json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.fresh_csrf()
+        self.create_account("customer", "reports-customer-b@example.com")
+        self.relogin("reports-customer-b@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Color"]})
+        removed_id = joined.json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.relogin("reports-owner@example.com")
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}/queues/{served_id}", json={"action": "serve"}
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}/queues/{served_id}", json={"action": "complete"}
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}/queues/{removed_id}",
+                json={"action": "remove", "reason": "no_show"},
+            ).status_code,
+            200,
+        )
+
+        for period in ("day", "week", "month", "all"):
+            response = self.client.get(f"/api/providers/{provider_id}/reports?period={period}")
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            report = response.json["report"]
+            self.assertEqual(report["period"], period)
+            self.assertEqual(report["served"], 1)
+            self.assertEqual(report["joined"], 2)
+            self.assertEqual(report["noShows"], 1)
+            self.assertEqual(report["removed"], 0)
+            self.assertEqual(report["services"][0]["name"], "Cut")
+            self.assertEqual(report["services"][0]["count"], 1)
+            self.assertIsNotNone(report["services"][0]["avgMinutes"])
+        day = self.client.get(f"/api/providers/{provider_id}/reports?period=day").json["report"]
+        self.assertTrue(day["label"].startswith("Today"))
+        bad = self.client.get(f"/api/providers/{provider_id}/reports?period=year")
+        self.assertEqual(bad.status_code, 400)
+
+        # Another provider cannot read these reports.
+        self.client.post("/logout")
+        self.fresh_csrf()
+        other = self.create_account("provider", "reports-other@example.com")
+        self.relogin("reports-other@example.com")
+        denied = self.client.get(f"/api/providers/{provider_id}/reports?period=day")
+        self.assertEqual(denied.status_code, 403)
+        own = self.client.get(f"/api/providers/{other['providerId']}/reports?period=all")
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(own.json["report"]["served"], 0)
+        self.assertEqual(own.json["report"]["services"], [])
+
 
 
 if __name__ == "__main__":

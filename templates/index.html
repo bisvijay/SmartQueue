@@ -236,7 +236,7 @@
 
       {% elif view == 'provider' %}
       {% if provider %}
-      <main class="dashboard-page" data-provider-id="{{ provider.id }}" data-service-duration="{{ provider.serviceDuration|default(15) }}">
+      <main class="dashboard-page" data-provider-id="{{ provider.id }}" data-service-duration="{{ provider.serviceDuration|default(15) }}" data-staff-count="{{ provider.staffCount or 1 }}">
         <div class="dashboard-top">
           <div><p class="eyebrow">PROVIDER SPACE</p><h1>{{ current_user.name }} <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
           <div class="dashboard-presentation-controls">
@@ -296,7 +296,7 @@
                   <button class="button button-complete queue-action" data-action="complete" data-queue-id="{{ entry.id }}" type="button">Complete</button>
                   {% else %}
                   {% if entry.buffer %}<span class="table-status buffer">Buffer waitlist</span>{% elif entry.carriedOver %}<span class="table-status carried">Carried over</span>{% else %}<span class="table-status waiting">{% if loop.first %}Next up{% else %}Waiting{% endif %}</span>{% endif %}
-                  <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" type="button" {% if service_in_progress %}disabled{% endif %}>Start service</button>
+                  <button class="button button-outline queue-action" data-action="serve" data-queue-id="{{ entry.id }}" type="button" {% if serving_slots_full %}disabled{% endif %}>Start service</button>
                   <button class="button button-outline queue-action queue-remove" data-action="remove" data-queue-id="{{ entry.id }}" type="button">Remove</button>
                   {% endif %}
                 </span>
@@ -340,6 +340,7 @@
               <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
               <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
               <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>
+              <label>Staff serving at the same time <small>How many customers your team can serve at once — one per staff member, chair, or counter.</small><input name="staffCount" type="number" min="1" max="20" value="{{ provider.staffCount if provider.staffCount is defined and provider.staffCount is not none else 1 }}" /></label>
               <div class="service-times">
                 <p class="service-times-heading">Your day <small>Set opening and closing times to switch on daily capacity limits, the buffer waitlist, and end-of-day queue handling.</small></p>
                 <label>Opening time<input name="openTime" type="time" value="{{ provider.openTime or '' }}" /></label>
@@ -383,6 +384,17 @@
             {% endif %}
           </section>
         </div>
+        <section class="dashboard-card reports-card" id="reports-card">
+          <div class="dashboard-card-heading"><div><p class="eyebrow">REPORTS</p><h2>Services report</h2></div><span class="live-tag" id="report-label"></span></div>
+          <div class="queue-filters" role="group" aria-label="Report period">
+            <button class="queue-filter is-selected" type="button" data-report-period="day" aria-pressed="true">Today</button>
+            <button class="queue-filter" type="button" data-report-period="week" aria-pressed="false">This week</button>
+            <button class="queue-filter" type="button" data-report-period="month" aria-pressed="false">This month</button>
+            <button class="queue-filter" type="button" data-report-period="all" aria-pressed="false">All time</button>
+          </div>
+          <div class="report-stats" id="report-stats"></div>
+          <div class="report-services" id="report-services"></div>
+        </section>
         <div class="dashboard-disclaimer">Queue and business settings are saved to your NextInQueue account.</div>
         </div>
       </main>
