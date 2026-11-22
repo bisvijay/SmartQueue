@@ -355,8 +355,8 @@ class ApiTests(unittest.TestCase):
 
     def test_logo_assets_are_served_and_used_in_header(self):
         home = self.client.get("/")
-        self.assertIn(b"/branding/logo.png", home.data)
-        self.assertIn(b"/branding/favicon.png", home.data)
+        self.assertIn(b"/branding/logo.png?v=3", home.data)
+        self.assertIn(b"/branding/favicon.png?v=3", home.data)
         self.assertNotIn(b"brand-mark", home.data)
         for asset in ("logo.png", "logo-icon.png", "favicon.png"):
             response = self.client.get(f"/branding/{asset}")
@@ -644,9 +644,9 @@ class ApiTests(unittest.TestCase):
 
     def test_tagline_hero_card_and_info_pages(self):
         home = self.client.get("/")
-        self.assertIn(b"Your time, better spent.", home.data)
+        self.assertIn(b"Queue Smarter.", home.data)
         self.assertIn(b"<em>Without the wait.</em>", home.data)
-        self.assertNotIn(b"Your place in line. Without the wait.", home.data)
+        self.assertNotIn(b"Your time, better spent.", home.data)
         self.assertNotIn(b"YOUR SPOT IS SAVED", home.data)
         self.assertIn(b"how-diagram", home.data)
         self.assertIn(b"Scan or tap", home.data)

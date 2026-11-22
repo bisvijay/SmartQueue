@@ -797,7 +797,7 @@ def create_app(test_config=None):
         response = make_response(payload)
         response.mimetype = "image/png"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "public, max-age=86400"
+        response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
     @app.before_request

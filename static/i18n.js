@@ -384,7 +384,7 @@
     "Provider listings require approval.": "प्रदाता लिस्टिंग के लिए स्वीकृति आवश्यक है।",
 
     // Page titles
-    "YouAreNext — Your time, better spent.": "YouAreNext — आपका समय, बेहतर उपयोग।",
+    "YouAreNext — Queue Smarter.": "YouAreNext — अब कतार, स्मार्ट तरीक़े से।",
     "Log in — YouAreNext": "लॉग इन — YouAreNext",
     "Create your account — YouAreNext": "अपना खाता बनाएँ — YouAreNext",
     "Reset password — YouAreNext": "पासवर्ड रीसेट करें — YouAreNext",

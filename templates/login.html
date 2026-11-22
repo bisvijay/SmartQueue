@@ -10,14 +10,14 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
     <script defer src="{{ url_for('static', filename='theme.js') }}"></script>
-    <link rel="icon" type="image/png" href="{{ url_for('branding_asset', asset_name='favicon.png') }}" />
+    <link rel="icon" type="image/png" href="{{ url_for('branding_asset', asset_name='favicon.png', v='3') }}" />
   </head>
   <body>
     <div class="app-shell registration-shell">
       <header class="site-header">
         <div class="header-inner">
           <a class="brand" href="{{ url_for('home') }}" aria-label="YouAreNext home">
-            <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png') }}" alt="YouAreNext" />
+            <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png', v='3') }}" alt="YouAreNext" />
           </a>
           <a class="nav-link" href="{{ url_for('register') }}">Create account</a>
         </div>
