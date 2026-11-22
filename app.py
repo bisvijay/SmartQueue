@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import logging
@@ -716,14 +717,64 @@ def create_app(test_config=None):
         except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
             return None, "The selected file is not a valid supported image."
 
+    def photo_record_id(photo_id):
+        if isinstance(photo_id, str) and photo_id.endswith(".jpg"):
+            return photo_id[:-4]
+        return photo_id
+
+    def save_provider_photo(provider_id, photo_id, contents):
+        record = {
+            "id": photo_record_id(photo_id),
+            "providerId": str(provider_id),
+            "data": base64.b64encode(contents).decode("ascii"),
+            "contentType": "image/jpeg",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        index_entry = {
+            "id": record["id"], "providerId": record["providerId"],
+            "contentType": record["contentType"], "createdAt": record["createdAt"],
+        }
+        try:
+            store.put("provider_photos", record["id"], record, index_entry)
+            return
+        except Exception:
+            log.warning("Provider photo could not be saved to the database; using file storage.", exc_info=True)
+        photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
+        photo_path.parent.mkdir(parents=True, exist_ok=True)
+        photo_path.write_bytes(contents)
+
+    def load_provider_photo(photo_id):
+        try:
+            record = store.get("provider_photos", photo_record_id(photo_id))
+        except Exception:
+            record = None
+        if record and record.get("data"):
+            try:
+                return base64.b64decode(record["data"])
+            except (ValueError, TypeError):
+                pass
+        photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
+        if photo_path.is_file():
+            return photo_path.read_bytes()
+        return None
+
+    def delete_provider_photo(photo_id):
+        try:
+            store.delete("provider_photos", photo_record_id(photo_id))
+        except Exception:
+            pass
+        photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
+        photo_path.unlink(missing_ok=True)
+
     @app.get("/media/providers/<photo_id>")
     def provider_photo(photo_id):
-        if not re.fullmatch(r"[a-f0-9]{32}\.jpg", photo_id):
+        if not re.fullmatch(r"[a-f0-9]{32}(\.jpg)?", photo_id):
             abort(404)
-        photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
-        if not photo_path.is_file():
+        contents = load_provider_photo(photo_id)
+        if contents is None:
             abort(404)
-        response = send_file(photo_path, mimetype="image/jpeg", conditional=True)
+        response = make_response(contents)
+        response.mimetype = "image/jpeg"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "public, max-age=3600"
         return response
@@ -1160,6 +1211,8 @@ def create_app(test_config=None):
                         photo_path.unlink(missing_ok=True)
                     raise RuntimeError("Could not create the provider listing.")
 
+        if provider is not None and photo_id:
+            save_provider_photo(str(provider["id"]), photo_id, photo_contents)
         clear_registration_photo_draft()
         return redirect(url_for("register", created="1"), code=303)
 
@@ -1625,25 +1678,19 @@ def create_app(test_config=None):
             raise ApiError(400, image_error)
         if not image_contents:
             raise ApiError(400, "Choose a JPEG, PNG, or WebP listing photo.")
+        _, provider = require_owned_provider(provider_id)
+        photo_id = f"{uuid.uuid4().hex}.jpg"
+        save_provider_photo(provider_id, photo_id, image_contents)
+        previous_photo_id = None
         with store.transaction():
             store.lock_providers([provider_id])
             _, provider = require_owned_provider(provider_id)
-            photo_id = f"{uuid.uuid4().hex}.jpg"
-            photo_path = Path(app.config["DATA_DIR"]) / "provider_photos" / photo_id
-            photo_path.parent.mkdir(parents=True, exist_ok=True)
-            photo_path.write_bytes(image_contents)
             previous_photo_id = provider.get("photoId")
             provider["photoId"] = photo_id
-            try:
-                store.put("providers", str(provider["id"]), provider, provider)
-            except OSError:
-                photo_path.unlink(missing_ok=True)
-                raise
-            if isinstance(previous_photo_id, str) and re.fullmatch(r"[a-f0-9]{32}\.jpg", previous_photo_id):
-                previous_photo = Path(app.config["DATA_DIR"]) / "provider_photos" / previous_photo_id
-                if previous_photo != photo_path:
-                    previous_photo.unlink(missing_ok=True)
-            return jsonify(provider=provider)
+            store.put("providers", str(provider["id"]), provider, provider)
+        if isinstance(previous_photo_id, str) and previous_photo_id != photo_id and re.fullmatch(r"[a-f0-9]{32}\.jpg", previous_photo_id):
+            delete_provider_photo(previous_photo_id)
+        return jsonify(provider=provider)
 
     @app.patch("/api/providers/<provider_id>")
     def update_provider(provider_id):

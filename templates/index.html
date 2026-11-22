@@ -236,7 +236,7 @@
       {% if provider %}
       <main class="dashboard-page" data-provider-id="{{ provider.id }}" data-service-duration="{{ provider.serviceDuration|default(15) }}" data-staff-count="{{ provider.staffCount or 1 }}">
         <div class="dashboard-top">
-          <div><p class="eyebrow">PROVIDER SPACE</p><h1><span data-i18n-name>{{ provider.name }}</span> <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
+          <div class="dashboard-heading">{% if provider.photoId %}<img class="dashboard-provider-photo" src="{{ url_for('provider_photo', photo_id=provider.photoId) }}" alt="" />{% endif %}<div><p class="eyebrow">PROVIDER SPACE</p><h1><span data-i18n-name>{{ provider.name }}</span> <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div></div>
           <div class="dashboard-presentation-controls">
             <button class="button button-outline" id="toggle-presentation" type="button" aria-expanded="false" aria-controls="provider-dashboard-content">Expand display</button>
             <button class="button button-dark" id="toggle-open" {% if provider.approvalStatus != 'approved' %}disabled title="Your listing must be approved first"{% endif %}><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>

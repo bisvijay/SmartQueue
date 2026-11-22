@@ -287,6 +287,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Willow &amp; Sage", response.data)
         self.assertIn(b"Sign up", response.data)
+        self.assertIn(b"\xc2\xa9 2026 NextInQueue", response.data)
+        self.assertNotIn(b"\xc2\xa9 2025", response.data)
+        dictionary = self.client.get("/static/i18n.js")
+        self.assertEqual(dictionary.status_code, 200)
+        self.assertIn(b"\xc2\xa9 2026 NextInQueue", dictionary.data)
+        self.assertNotIn(b"\xc2\xa9 2025", dictionary.data)
+        dictionary.close()
         self.assertEqual(len(self.store.list("providers")), 4)
 
     def test_provider_admin_and_static_pages_render(self):
@@ -1351,8 +1358,9 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(uploaded.status_code, 200, uploaded.get_data(as_text=True))
         photo_id = uploaded.json["provider"]["photoId"]
-        photo_path = Path(self.app.config["DATA_DIR"]) / "provider_photos" / photo_id
-        self.assertTrue(photo_path.is_file())
+        # Photos are stored in the database (provider_photos), not as
+        # local files, so they survive hosts with ephemeral disks.
+        self.assertIsNotNone(self.store.get("provider_photos", photo_id.removesuffix(".jpg")))
         self.assertEqual(self.client.get("/").status_code, 200)
         self.assertIn(photo_id.encode(), self.client.get("/").data)
 
@@ -2157,6 +2165,62 @@ class ApiTests(unittest.TestCase):
         # visible: the stylesheet no longer hides the title block.
         served_css = self.client.get("/static/styles.css").data
         self.assertNotIn(b".presentation-expanded .dashboard-top > div:first-child", served_css)
+
+    def test_provider_photo_upload_uses_database_storage(self):
+        provider_user = self.create_account("provider", "photo-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("photo-owner@example.com")
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (48, 36), color=(30, 80, 120)).save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        uploaded = self.client.post(
+            f"/api/providers/{provider_id}/photo",
+            data={"photo": (image_buffer, "shop.png", "image/png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.get_data(as_text=True))
+        photo_id = uploaded.json["provider"]["photoId"]
+        self.assertTrue(photo_id)
+
+        # The photo lives in the store (the database in production), not
+        # only as a file on the server's disk, so it survives redeploys.
+        record = self.store.get("provider_photos", photo_id.removesuffix(".jpg"))
+        self.assertIsNotNone(record)
+        self.assertTrue(record["data"])
+
+        served = self.client.get(f"/media/providers/{photo_id}")
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.mimetype, "image/jpeg")
+        served.get_data()
+        served.close()
+
+        # It shows beside the business name on the provider dashboard and
+        # on the discover card.
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b"dashboard-provider-photo", dashboard.data)
+        card = self.client.get("/")
+        self.assertIn(b"provider-photo", card.data)
+
+        # Replacing the photo removes the old one.
+        image_buffer = BytesIO()
+        Image.new("RGB", (48, 36), color=(120, 40, 30)).save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        replaced = self.client.post(
+            f"/api/providers/{provider_id}/photo",
+            data={"photo": (image_buffer, "shop2.png", "image/png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(replaced.status_code, 200, replaced.get_data(as_text=True))
+        new_photo_id = replaced.json["provider"]["photoId"]
+        self.assertNotEqual(new_photo_id, photo_id)
+        self.assertIsNone(self.store.get("provider_photos", photo_id.removesuffix(".jpg")))
+        self.assertEqual(self.client.get(f"/media/providers/{photo_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/media/providers/{new_photo_id}").status_code, 200)
+
+        # Migration 004 creates the backing table.
+        migration = Path("migrations/004_provider_photos.sql").read_text()
+        self.assertIn("provider_photos", migration)
 
 
 

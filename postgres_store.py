@@ -18,6 +18,7 @@ TABLES = {
     "providers": "providers",
     "queues": "queue_visits",
     "provider_reviews": "provider_reviews",
+    "provider_photos": "provider_photos",
 }
 
 
@@ -323,6 +324,18 @@ class PostgresStore:
                 record[key] = value.isoformat()
         return record
 
+    @staticmethod
+    def _photo_record(row):
+        record = dict(row["app_data"] or {})
+        record.update({
+            "id": str(row["id"]),
+            "providerId": str(row["provider_id"]),
+            "data": row["data"],
+            "contentType": row["content_type"],
+            "createdAt": row["created_at"].isoformat(),
+        })
+        return record
+
     def _get(self, connection, collection, record_id):
         if collection == "users":
             row = connection.execute("SELECT * FROM accounts WHERE id = %s", (_uuid(record_id),)).fetchone()
@@ -333,6 +346,9 @@ class PostgresStore:
         if collection == "queues":
             row = connection.execute("SELECT * FROM queue_visits WHERE id = %s", (_uuid(record_id),)).fetchone()
             return self._queue_record(row) if row else None
+        if collection == "provider_photos":
+            row = connection.execute("SELECT * FROM provider_photos WHERE id = %s", (_uuid(record_id),)).fetchone()
+            return self._photo_record(row) if row else None
         if collection == "provider_reviews":
             row = connection.execute("SELECT * FROM provider_reviews WHERE id = %s", (_uuid(record_id),)).fetchone()
             if not row:
@@ -376,6 +392,9 @@ class PostgresStore:
             if collection == "queues":
                 rows = connection.execute("SELECT * FROM queue_visits ORDER BY joined_at, id").fetchall()
                 return [self._queue_record(row) for row in rows]
+            if collection == "provider_photos":
+                rows = connection.execute("SELECT * FROM provider_photos ORDER BY created_at, id").fetchall()
+                return [self._photo_record(row) for row in rows]
             rows = connection.execute("SELECT * FROM provider_reviews ORDER BY created_at, id").fetchall()
             return [
                 {**dict(row["app_data"] or {}), "id": str(row["id"]), "providerId": str(row["provider_id"]),
@@ -528,6 +547,26 @@ class PostgresStore:
         """, values)
         return True
 
+    def _write_photo(self, connection, record, create=False):
+        extra = self._extra(record, {"id", "providerId", "data", "contentType", "createdAt"})
+        values = (
+            _uuid(record["id"]), _uuid(record["providerId"]), record["data"],
+            record.get("contentType") or "image/jpeg", _timestamp(record.get("createdAt")),
+            json.dumps(extra),
+        )
+        command = """
+            INSERT INTO provider_photos (id, provider_id, data, content_type, created_at, app_data)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        """
+        if create:
+            return connection.execute(command + " ON CONFLICT DO NOTHING RETURNING id", values).fetchone() is not None
+        connection.execute(command + """
+            ON CONFLICT (id) DO UPDATE SET provider_id=EXCLUDED.provider_id,
+            data=EXCLUDED.data, content_type=EXCLUDED.content_type,
+            created_at=EXCLUDED.created_at, app_data=EXCLUDED.app_data
+        """, values)
+        return True
+
     def put(self, collection, record_id, data, index_entry=None):
         record = dict(data)
         record["id"] = str(record_id)
@@ -536,6 +575,7 @@ class PostgresStore:
             "providers": self._write_provider,
             "queues": self._write_queue,
             "provider_reviews": self._write_review,
+            "provider_photos": self._write_photo,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")
@@ -550,6 +590,7 @@ class PostgresStore:
             "providers": self._write_provider,
             "queues": self._write_queue,
             "provider_reviews": self._write_review,
+            "provider_photos": self._write_photo,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")
