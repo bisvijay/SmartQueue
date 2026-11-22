@@ -11,14 +11,14 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
     <script defer src="{{ url_for('static', filename='theme.js') }}"></script>
+    <link rel="icon" type="image/png" href="{{ url_for('branding_asset', asset_name='favicon.png') }}" />
   </head>
   <body>
     <div class="app-shell">
       <header class="site-header">
         <div class="header-inner">
           <a class="brand" href="{{ url_for('home') }}" aria-label="NextInQueue home">
-            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span>nextinqueue</span>
+            <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png') }}" alt="Next in Line" />
           </a>
         </div>
       </header>

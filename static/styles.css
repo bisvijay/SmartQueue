@@ -15,11 +15,12 @@
   --accent-text: #345d3e;
   --accent-text-hover: #244b30;
   --accent-bright: #65a475;
-  --accent-soft: #eaf1e8;
-  --accent-wash: #e9f0e7;
-  --accent-sun: #d7e5d2;
+  --accent-soft: #dfedd9;
+  --accent-wash: #d9e9d2;
+  --accent-sun: #bcd8ae;
   --accent-glow: rgba(89, 143, 98, .13);
   --accent-line: #dce8da;
+ --page-bg: #eaf2e3;
   --line: #e7e9e3;
   --paper: #fff;
   --display: "Manrope", sans-serif;
@@ -27,7 +28,7 @@
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; }
+body { margin: 0; min-width: 320px; background: linear-gradient(180deg, var(--page-bg, #eef4ea), #fdfefd 460px); background-attachment: fixed; }
 button, input { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { color: inherit; }
@@ -37,11 +38,7 @@ a { color: inherit; text-decoration: none; }
 .site-header { height: 78px; border-bottom: 1px solid rgba(37, 51, 40, .08); background: rgba(255,255,255,.92); }
 .header-inner { width: min(1200px, calc(100% - 64px)); height: 100%; margin: auto; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--display); font-size: 19px; font-weight: 800; letter-spacing: -1px; }
-.brand-mark { width: 29px; height: 29px; display: flex; align-items: end; justify-content: center; gap: 3px; border-radius: 9px; background: var(--accent-soft); padding: 7px; }
-.brand-mark i { width: 4px; background: var(--green); border-radius: 4px; }
-.brand-mark i:nth-child(1) { height: 8px; }
-.brand-mark i:nth-child(2) { height: 14px; }
-.brand-mark i:nth-child(3) { height: 10px; }
+.brand-logo { display: block; height: 52px; width: auto; }
 .main-nav { display: flex; align-items: center; gap: 36px; margin-left: 60px; }
 .nav-link { position: relative; border: 0; background: none; color: #6d746e; font-size: 13px; font-weight: 600; cursor: pointer; }
 .nav-link:hover, .nav-link.active { color: var(--green-dark); }
@@ -61,7 +58,7 @@ a { color: inherit; text-decoration: none; }
 .queue-shortcut { color: var(--green); font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .queue-dot, .status-dot, .pulse-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; background: var(--accent-bright); border-radius: 50%; }
 
-.hero { background: var(--accent-wash); overflow: hidden; }
+.hero { background: linear-gradient(135deg, var(--accent-wash), var(--accent-soft) 55%, var(--accent-sun)); overflow: hidden; }
 .hero-inner { width: min(1200px, calc(100% - 64px)); min-height: 406px; margin: auto; display: grid; grid-template-columns: 1fr 1fr; align-items: center; }
 .hero-copy { padding: 43px 0 49px 30px; position: relative; z-index: 1; }
 .hero-kicker, .eyebrow { color: #6f806f; font-size: 9px; font-weight: 700; letter-spacing: 1.65px; }
@@ -427,7 +424,7 @@ h1, h2, h3, p { margin-top: 0; }
   .site-header { height: auto; }
   .header-inner { width: calc(100% - 24px); flex-wrap: wrap; padding: 9px 0 10px; row-gap: 8px; }
   .brand { gap: 7px; font-size: 15px; }
-  .brand-mark { width: 25px; height: 25px; padding: 6px; }
+  .brand-logo { height: 40px; }
   .main-nav { gap: 14px; margin-left: auto; }
   .main-nav .nav-link { padding: 6px 0; font-size: 11px; }
   .main-nav a { display: none; }
@@ -611,6 +608,20 @@ h1, h2, h3, p { margin-top: 0; }
 /* Color themes: festive Indian palettes, applied soberly — only accent
    colors change; layout, text, and neutrals stay the same. The default
    (no data-theme) is the classic green defined in :root. */
+html[data-theme="brand"] {
+  --green: #0b5ed7;
+  --green-dark: #084298;
+  --accent-mid: #1c74e4;
+  --accent-text: #0a58ca;
+  --accent-text-hover: #084298;
+  --accent-bright: #f59e0b;
+  --accent-soft: #e2ecfd;
+  --accent-wash: #e9f1fe;
+  --accent-sun: #ffd9a0;
+  --accent-glow: rgba(11, 94, 215, .15);
+  --accent-line: #c3d7f6;
+  --page-bg: #e9f1fd;
+}
 html[data-theme="marigold"] {
   --green: #b45309;
   --green-dark: #92400e;
@@ -618,11 +629,12 @@ html[data-theme="marigold"] {
   --accent-text: #b45309;
   --accent-text-hover: #92400e;
   --accent-bright: #f59e0b;
-  --accent-soft: #fdf0d5;
-  --accent-wash: #fdf6e0;
-  --accent-sun: #f9e3ae;
+  --accent-soft: #fce9bf;
+  --accent-wash: #fbeecb;
+  --accent-sun: #f5cf7d;
   --accent-glow: rgba(245, 158, 11, .16);
   --accent-line: #f0ddae;
+  --page-bg: #fdf2d7;
 }
 html[data-theme="sindoor"] {
   --green: #b91c1c;
@@ -631,11 +643,12 @@ html[data-theme="sindoor"] {
   --accent-text: #b91c1c;
   --accent-text-hover: #991b1b;
   --accent-bright: #ef4444;
-  --accent-soft: #fdecec;
-  --accent-wash: #fdf0ef;
-  --accent-sun: #f6d5d0;
+  --accent-soft: #fadede;
+  --accent-wash: #fbe3e0;
+  --accent-sun: #f0bdb2;
   --accent-glow: rgba(220, 38, 38, .13);
   --accent-line: #f2cfc9;
+  --page-bg: #fdecea;
 }
 html[data-theme="rani"] {
   --green: #be185d;
@@ -644,11 +657,12 @@ html[data-theme="rani"] {
   --accent-text: #be185d;
   --accent-text-hover: #9d174d;
   --accent-bright: #ec4899;
-  --accent-soft: #fce7f1;
-  --accent-wash: #fdf2f7;
-  --accent-sun: #f4cfe0;
+  --accent-soft: #fad3e5;
+  --accent-wash: #fce4ef;
+  --accent-sun: #eda9c8;
   --accent-glow: rgba(236, 72, 153, .14);
   --accent-line: #f0c9da;
+  --page-bg: #fdeef5;
 }
 html[data-theme="peacock"] {
   --green: #0f766e;
@@ -657,11 +671,12 @@ html[data-theme="peacock"] {
   --accent-text: #0f766e;
   --accent-text-hover: #115e59;
   --accent-bright: #14b8a6;
-  --accent-soft: #e0f2f0;
-  --accent-wash: #ecf7f4;
-  --accent-sun: #c4e5dd;
+  --accent-soft: #cdeae4;
+  --accent-wash: #d8f0e9;
+  --accent-sun: #9fd8c6;
   --accent-glow: rgba(20, 184, 166, .14);
   --accent-line: #c2e0d9;
+  --page-bg: #e6f4ef;
 }
 
 .theme-picker-wrap { display: inline-flex; align-items: center; }

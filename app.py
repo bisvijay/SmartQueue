@@ -779,6 +779,27 @@ def create_app(test_config=None):
         response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
+    # Branding images ship as base64 text files (the repo tooling stores
+    # text only), decoded once at startup and served from memory.
+    branding_assets = {}
+    for asset_name in ("logo.png", "logo-icon.png", "favicon.png"):
+        try:
+            encoded = (Path(app.static_folder) / f"{asset_name}.b64").read_text(encoding="ascii")
+            branding_assets[asset_name] = base64.b64decode(encoded)
+        except (OSError, ValueError):
+            app.logger.warning("Branding asset %s could not be loaded", asset_name)
+
+    @app.get("/branding/<asset_name>")
+    def branding_asset(asset_name):
+        payload = branding_assets.get(asset_name)
+        if payload is None:
+            abort(404)
+        response = make_response(payload)
+        response.mimetype = "image/png"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
     @app.before_request
     def initialize_data():
         seed_providers()

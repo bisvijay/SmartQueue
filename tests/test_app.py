@@ -343,14 +343,27 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(script.status_code, 200)
         body = script.get_data(as_text=True)
         self.assertIn("smartqueue.theme", body)
-        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+        for theme_id in ("brand", "marigold", "sindoor", "rani", "peacock"):
             self.assertIn(theme_id, body)
         script.close()
         styles = self.client.get("/static/styles.css")
         css = styles.get_data(as_text=True)
-        for theme_id in ("marigold", "sindoor", "rani", "peacock"):
+        for theme_id in ("brand", "marigold", "sindoor", "rani", "peacock"):
             self.assertIn(f'[data-theme="{theme_id}"]', css)
+        self.assertIn("--page-bg", css)
         styles.close()
+
+    def test_logo_assets_are_served_and_used_in_header(self):
+        home = self.client.get("/")
+        self.assertIn(b"/branding/logo.png", home.data)
+        self.assertIn(b"/branding/favicon.png", home.data)
+        self.assertNotIn(b"brand-mark", home.data)
+        for asset in ("logo.png", "logo-icon.png", "favicon.png"):
+            response = self.client.get(f"/branding/{asset}")
+            self.assertEqual(response.status_code, 200, asset)
+            self.assertEqual(response.mimetype, "image/png", asset)
+            self.assertTrue(response.data.startswith(b"\x89PNG"), asset)
+            response.close()
 
     def test_new_provider_requires_approval_to_appear_or_accept_queue_entries(self):
         registration = self.client.post("/register", data={

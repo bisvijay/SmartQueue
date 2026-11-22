@@ -10,6 +10,7 @@
   const STORAGE_KEY = "smartqueue.theme";
   const THEMES = [
     { id: "classic", label: "Classic · क्लासिक" },
+    { id: "brand", label: "Brand · ब्रांड" },
     { id: "marigold", label: "Marigold · गेंदा" },
     { id: "sindoor", label: "Sindoor · सिंदूर" },
     { id: "rani", label: "Rani Pink · रानी गुलाबी" },
