@@ -19,6 +19,9 @@ TABLES = {
     "queues": "queue_visits",
     "provider_reviews": "provider_reviews",
     "provider_photos": "provider_photos",
+    "advertisements": "advertisements",
+    "ad_media": "ad_media",
+    "ad_events": "ad_events",
 }
 
 
@@ -336,6 +339,37 @@ class PostgresStore:
         })
         return record
 
+    @staticmethod
+    def _ad_record(row):
+        record = dict(row["app_data"] or {})
+        record.update({
+            "id": str(row["id"]),
+            "createdAt": row["created_at"].isoformat(),
+        })
+        return record
+
+    @staticmethod
+    def _ad_media_record(row):
+        record = dict(row["app_data"] or {})
+        record.update({
+            "id": str(row["id"]),
+            "adId": str(row["ad_id"]),
+            "data": row["data"],
+            "contentType": row["content_type"],
+            "createdAt": row["created_at"].isoformat(),
+        })
+        return record
+
+    @staticmethod
+    def _ad_event_record(row):
+        record = dict(row["app_data"] or {})
+        record.update({
+            "id": str(row["id"]),
+            "adId": str(row["ad_id"]),
+            "createdAt": row["created_at"].isoformat(),
+        })
+        return record
+
     def _get(self, connection, collection, record_id):
         if collection == "users":
             row = connection.execute("SELECT * FROM accounts WHERE id = %s", (_uuid(record_id),)).fetchone()
@@ -361,6 +395,15 @@ class PostgresStore:
                 "note": row["note"],
                 "createdAt": row["created_at"].isoformat(),
             }
+        if collection == "advertisements":
+            row = connection.execute("SELECT * FROM advertisements WHERE id = %s", (_uuid(record_id),)).fetchone()
+            return self._ad_record(row) if row else None
+        if collection == "ad_media":
+            row = connection.execute("SELECT * FROM ad_media WHERE id = %s", (_uuid(record_id),)).fetchone()
+            return self._ad_media_record(row) if row else None
+        if collection == "ad_events":
+            row = connection.execute("SELECT * FROM ad_events WHERE id = %s", (_uuid(record_id),)).fetchone()
+            return self._ad_event_record(row) if row else None
         raise ValueError(f"Unknown collection: {collection}")
 
     def get(self, collection, record_id):
@@ -395,6 +438,16 @@ class PostgresStore:
             if collection == "provider_photos":
                 rows = connection.execute("SELECT * FROM provider_photos ORDER BY created_at, id").fetchall()
                 return [self._photo_record(row) for row in rows]
+            if collection == "advertisements":
+                rows = connection.execute("SELECT * FROM advertisements ORDER BY created_at, id").fetchall()
+                return [self._ad_record(row) for row in rows]
+            if collection == "ad_media":
+                rows = connection.execute("SELECT id, ad_id, content_type, created_at, app_data FROM ad_media ORDER BY created_at, id").fetchall()
+                return [{**dict(row["app_data"] or {}), "id": str(row["id"]), "adId": str(row["ad_id"]),
+                         "contentType": row["content_type"], "createdAt": row["created_at"].isoformat()} for row in rows]
+            if collection == "ad_events":
+                rows = connection.execute("SELECT * FROM ad_events ORDER BY created_at, id").fetchall()
+                return [self._ad_event_record(row) for row in rows]
             rows = connection.execute("SELECT * FROM provider_reviews ORDER BY created_at, id").fetchall()
             return [
                 {**dict(row["app_data"] or {}), "id": str(row["id"]), "providerId": str(row["provider_id"]),
@@ -567,6 +620,59 @@ class PostgresStore:
         """, values)
         return True
 
+    def _write_ad(self, connection, record, create=False):
+        extra = self._extra(record, {"id", "createdAt"})
+        values = (
+            _uuid(record["id"]), _timestamp(record.get("createdAt")), json.dumps(extra),
+        )
+        command = """
+            INSERT INTO advertisements (id, created_at, app_data)
+            VALUES (%s, %s, %s::jsonb)
+        """
+        if create:
+            return connection.execute(command + " ON CONFLICT DO NOTHING RETURNING id", values).fetchone() is not None
+        connection.execute(command + """
+            ON CONFLICT (id) DO UPDATE SET created_at=EXCLUDED.created_at, app_data=EXCLUDED.app_data
+        """, values)
+        return True
+
+    def _write_ad_media(self, connection, record, create=False):
+        extra = self._extra(record, {"id", "adId", "data", "contentType", "createdAt"})
+        values = (
+            _uuid(record["id"]), _uuid(record["adId"]), record["data"],
+            record.get("contentType") or "application/octet-stream",
+            _timestamp(record.get("createdAt")), json.dumps(extra),
+        )
+        command = """
+            INSERT INTO ad_media (id, ad_id, data, content_type, created_at, app_data)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+        """
+        if create:
+            return connection.execute(command + " ON CONFLICT DO NOTHING RETURNING id", values).fetchone() is not None
+        connection.execute(command + """
+            ON CONFLICT (id) DO UPDATE SET ad_id=EXCLUDED.ad_id, data=EXCLUDED.data,
+            content_type=EXCLUDED.content_type, created_at=EXCLUDED.created_at, app_data=EXCLUDED.app_data
+        """, values)
+        return True
+
+    def _write_ad_event(self, connection, record, create=False):
+        extra = self._extra(record, {"id", "adId", "createdAt"})
+        values = (
+            _uuid(record["id"]), _uuid(record["adId"]),
+            _timestamp(record.get("createdAt")), json.dumps(extra),
+        )
+        command = """
+            INSERT INTO ad_events (id, ad_id, created_at, app_data)
+            VALUES (%s, %s, %s, %s::jsonb)
+        """
+        if create:
+            return connection.execute(command + " ON CONFLICT DO NOTHING RETURNING id", values).fetchone() is not None
+        connection.execute(command + """
+            ON CONFLICT (id) DO UPDATE SET ad_id=EXCLUDED.ad_id,
+            created_at=EXCLUDED.created_at, app_data=EXCLUDED.app_data
+        """, values)
+        return True
+
     def put(self, collection, record_id, data, index_entry=None):
         record = dict(data)
         record["id"] = str(record_id)
@@ -576,6 +682,9 @@ class PostgresStore:
             "queues": self._write_queue,
             "provider_reviews": self._write_review,
             "provider_photos": self._write_photo,
+            "advertisements": self._write_ad,
+            "ad_media": self._write_ad_media,
+            "ad_events": self._write_ad_event,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")
@@ -591,6 +700,9 @@ class PostgresStore:
             "queues": self._write_queue,
             "provider_reviews": self._write_review,
             "provider_photos": self._write_photo,
+            "advertisements": self._write_ad,
+            "ad_media": self._write_ad_media,
+            "ad_events": self._write_ad_event,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")

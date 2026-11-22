@@ -12,6 +12,7 @@
     <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
     <script defer src="{{ url_for('static', filename='theme.js') }}"></script>
     <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='ads.js') }}"></script>
     <link rel="icon" type="image/png" href="{{ url_for('branding_asset', asset_name='favicon.png', v='3') }}" />
   </head>
   <body>
@@ -79,6 +80,7 @@
               <span class="hero-spark spark-one">✦</span><span class="hero-spark spark-two">✳</span>
               <span class="hero-caption">A little more<br />room in your day.</span>
             </div>
+            <div class="ad-slot ad-slot-home" data-ad-placement="home" hidden></div>
           </div>
         </section>
 
@@ -310,6 +312,7 @@
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
             <p class="provider-qr-name" data-i18n-name>{{ provider.name }}</p>
             <p>Scan to find this listing and join the queue.</p>
+            <div class="ad-slot ad-slot-dashboard" data-ad-placement="dashboard" data-ad-provider="{{ provider.id }}" data-ad-category="{{ provider.category }}" hidden></div>
             {% else %}
             <p>Your listing QR code will be available after approval.</p>
             {% endif %}
@@ -436,12 +439,112 @@
                 <button class="button button-dark admin-approval-action" type="button" data-action="approve" {% if provider.approvalStatus == 'approved' %}disabled{% endif %}>Approve</button>
                 <button class="button button-outline admin-approval-action" type="button" data-action="reject" {% if provider.approvalStatus == 'rejected' %}disabled{% endif %}>Reject</button>
               </div>
+              <label class="ads-permission-toggle"><input type="checkbox" data-ads-permission {% if provider.adsEnabled != false %}checked{% endif %} /> Allow Advertisements</label>
             </div>
           </article>
           {% endfor %}
           {% else %}
           <p>No provider listings to review.</p>
           {% endif %}
+        </section>
+        <section class="dashboard-card ads-admin-card" data-ads-admin>
+          <div class="dashboard-card-heading"><div><p class="eyebrow">PROMOTIONS</p><h2>Advertisements</h2></div><button class="button button-dark" type="button" id="ads-new">New advertisement</button></div>
+          <div class="ads-filters">
+            <label>Status
+              <select id="ads-filter-status">
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <label>Service category
+              <select id="ads-filter-category">
+                <option value="">All categories</option>
+                <option value="Salon">Salon</option>
+                <option value="Healthcare">Healthcare</option>
+                <option value="Food &amp; drink">Food &amp; drink</option>
+                <option value="Government">Government</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>Content type
+              <select id="ads-filter-type">
+                <option value="">All types</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+          </div>
+          <div class="ads-table-wrap">
+            <table class="ads-table">
+              <thead><tr><th>Name</th><th>Type</th><th>Categories</th><th>Placements</th><th>Duration</th><th>Schedule</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody id="ads-tbody"></tbody>
+            </table>
+            <p id="ads-empty">No advertisements yet. Create one to show it on the home page or provider dashboards.</p>
+          </div>
+          <form class="ad-form provider-settings-form" id="ad-form" hidden>
+            <h3 id="ad-form-title">New advertisement</h3>
+            <input type="hidden" name="id" />
+            <label>Advertisement Name <input name="name" maxlength="120" required /></label>
+            <label>Description <small>Optional, for your reference only</small><input name="description" maxlength="500" /></label>
+            <label>Content Type
+              <select name="contentType">
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+            <div id="ad-file-row">
+              <label>File Upload <small>Images: JPG, PNG, or WebP under 5 MB · Videos: MP4 or WebM under 10 MB</small><input type="file" name="media" /></label>
+              <p class="inline-notice" id="ad-file-note"></p>
+            </div>
+            <div id="ad-text-row" hidden>
+              <label>Text Content <textarea name="textContent" rows="3" maxlength="500"></textarea></label>
+            </div>
+            <label>Display Duration (seconds) <input name="durationSeconds" type="number" min="3" max="120" step="1" value="8" required /></label>
+            <fieldset class="ad-check-group">
+              <legend>Service Categories</legend>
+              <label><input type="checkbox" name="ad-category" value="Salon" /> Salon</label>
+              <label><input type="checkbox" name="ad-category" value="Healthcare" /> Healthcare</label>
+              <label><input type="checkbox" name="ad-category" value="Food &amp; drink" /> Food &amp; drink</label>
+              <label><input type="checkbox" name="ad-category" value="Government" /> Government</label>
+              <label><input type="checkbox" name="ad-category" value="Other" /> Other</label>
+            </fieldset>
+            <fieldset class="ad-check-group">
+              <legend>Placements</legend>
+              <label><input type="checkbox" name="ad-placement" value="home" /> Home page</label>
+              <label><input type="checkbox" name="ad-placement" value="dashboard" /> Provider dashboard</label>
+            </fieldset>
+            <label>Start Date <small>Optional</small><input name="startsAt" type="datetime-local" /></label>
+            <label>End Date <small>Optional</small><input name="endsAt" type="datetime-local" /></label>
+            <label>Priority <small>0–100; higher shows earlier in the rotation</small><input name="priority" type="number" min="0" max="100" step="1" value="0" /></label>
+            <label class="ads-active-toggle"><input type="checkbox" name="active" checked /> Active</label>
+            <div class="ad-form-actions">
+              <button class="button button-dark" type="submit">Save advertisement</button>
+              <button class="button button-outline" type="button" id="ad-form-preview">Preview</button>
+              <button class="button button-outline" type="button" id="ad-form-cancel">Cancel</button>
+            </div>
+          </form>
+          <div class="ad-preview-wrap" id="ad-preview-wrap" hidden>
+            <div class="ad-preview-controls">
+              <label>Placement
+                <select id="ad-preview-placement">
+                  <option value="home">Home page</option>
+                  <option value="dashboard">Provider dashboard</option>
+                </select>
+              </label>
+              <label>Device
+                <select id="ad-preview-device">
+                  <option value="desktop">Desktop</option>
+                  <option value="mobile">Mobile</option>
+                </select>
+              </label>
+              <button class="button button-outline" type="button" id="ad-preview-close">Close preview</button>
+            </div>
+            <div class="ad-preview-frame" id="ad-preview-frame"></div>
+          </div>
+          <p class="inline-notice" id="ads-notice" role="status" hidden></p>
         </section>
         <p class="inline-notice" id="admin-approval-notice" role="status" hidden></p>
       </main>

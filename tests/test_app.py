@@ -2236,6 +2236,238 @@ class ApiTests(unittest.TestCase):
         migration = Path("migrations/004_provider_photos.sql").read_text()
         self.assertIn("provider_photos", migration)
 
+    # ---- Advertisements ---------------------------------------------------
+
+    def create_ad(self, **overrides):
+        self.login_admin()
+        data = {
+            "name": "Spring offer",
+            "description": "Test campaign",
+            "contentType": "text",
+            "textContent": "20% off haircuts this week",
+            "durationSeconds": "6",
+            "categories": json.dumps(["Salon"]),
+            "placements": json.dumps(["home", "dashboard"]),
+            "priority": "0",
+            "active": "true",
+            "startsAt": "",
+            "endsAt": "",
+        }
+        data.update(overrides)
+        response = self.client.post(
+            "/api/admin/ads", data=data, content_type="multipart/form-data"
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        return response.json["ad"]
+
+    def eligible(self, query):
+        response = self.client.get(f"/api/ads/eligible?{query}")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.json["ads"]
+
+    def test_ads_admin_endpoints_require_admin(self):
+        self.assertEqual(self.client.get("/api/admin/ads").status_code, 403)
+        response = self.client.post(
+            "/api/admin/ads",
+            data={"name": "Nope", "contentType": "text", "textContent": "x"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_text_ad_eligibility_and_category_targeting(self):
+        ad = self.create_ad()
+        home_salon = self.eligible("placement=home&category=Salon")
+        self.assertEqual([item["id"] for item in home_salon], [ad["id"]])
+        self.assertEqual(home_salon[0]["textContent"], "20% off haircuts this week")
+        # A different category context does not match.
+        self.assertEqual(self.eligible("placement=home&category=Healthcare"), [])
+        # No category context on the home page: the ad is eligible.
+        self.assertEqual(len(self.eligible("placement=home")), 1)
+        # Inactive ads never show.
+        self.client.patch(
+            f"/api/admin/ads/{ad['id']}",
+            data={"active": "false"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(self.eligible("placement=home&category=Salon"), [])
+
+    def test_ad_scheduling_window(self):
+        future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        self.create_ad(name="Future", startsAt=future)
+        self.create_ad(name="Expired", endsAt=past)
+        self.create_ad(name="Current")
+        names = [item["id"] for item in self.eligible("placement=home&category=Salon")]
+        self.assertEqual(len(names), 1)
+        listed = self.client.get("/api/admin/ads").json["ads"]
+        current = next(item for item in listed if item["name"] == "Current")
+        self.assertEqual(names, [current["id"]])
+
+    def test_ad_priority_orders_rotation(self):
+        low = self.create_ad(name="Low", priority="1")
+        high = self.create_ad(name="High", priority="9")
+        ids = [item["id"] for item in self.eligible("placement=home&category=Salon")]
+        self.assertEqual(ids, [high["id"], low["id"]])
+
+    def test_dashboard_ads_follow_provider_category_and_permission(self):
+        provider_user = self.create_account("provider", "ads-owner@example.com")
+        provider_id = str(provider_user["providerId"])  # category: Salon
+        ad = self.create_ad()
+        self.create_ad(name="Clinic ad", categories=json.dumps(["Healthcare"]))
+        dashboard_ads = self.eligible(f"placement=dashboard&providerId={provider_id}")
+        self.assertEqual([item["id"] for item in dashboard_ads], [ad["id"]])
+        # Admin turns ads off for this provider: nothing is served anymore.
+        self.login_admin()
+        response = self.client.patch(
+            f"/api/admin/providers/{provider_id}/ads-permission",
+            json={"adsEnabled": False},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(self.eligible(f"placement=dashboard&providerId={provider_id}"), [])
+        provider = self.store.get("providers", provider_id)
+        self.assertIs(provider["adsEnabled"], False)
+        # Turning it back on restores eligibility without any re-login.
+        self.client.patch(
+            f"/api/admin/providers/{provider_id}/ads-permission",
+            json={"adsEnabled": True},
+        )
+        self.assertEqual(
+            len(self.eligible(f"placement=dashboard&providerId={provider_id}")), 1
+        )
+
+    def test_image_ad_upload_validation_and_serving(self):
+        self.login_admin()
+        bad = self.client.post(
+            "/api/admin/ads",
+            data={
+                "name": "Bad file",
+                "contentType": "image",
+                "durationSeconds": "5",
+                "categories": json.dumps(["Salon"]),
+                "placements": json.dumps(["home"]),
+                "active": "true",
+                "media": (BytesIO(b"not an image"), "evil.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(bad.status_code, 400, bad.get_data(as_text=True))
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (64, 40), color=(200, 90, 40)).save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        created = self.client.post(
+            "/api/admin/ads",
+            data={
+                "name": "Banner",
+                "contentType": "image",
+                "durationSeconds": "5",
+                "categories": json.dumps(["Salon"]),
+                "placements": json.dumps(["home"]),
+                "active": "true",
+                "media": (image_buffer, "banner.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        ad = created.json["ad"]
+        self.assertTrue(ad["mediaId"])
+        record = self.store.get("ad_media", ad["mediaId"])
+        self.assertIsNotNone(record)
+        self.assertTrue(record["data"])
+        served = self.client.get(f"/media/ads/{ad['mediaId']}")
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.mimetype, "image/png")
+        served.close()
+        home_ads = self.eligible("placement=home&category=Salon")
+        self.assertEqual(home_ads[0]["mediaUrl"], f"/media/ads/{ad['mediaId']}")
+        # Deleting the ad removes its media too.
+        self.assertEqual(self.client.delete(f"/api/admin/ads/{ad['id']}").status_code, 200)
+        self.assertIsNone(self.store.get("ad_media", ad["mediaId"]))
+        self.assertEqual(self.client.get(f"/media/ads/{ad['mediaId']}").status_code, 404)
+
+    def test_video_ad_upload_validation(self):
+        self.login_admin()
+        fake = self.client.post(
+            "/api/admin/ads",
+            data={
+                "name": "Fake video",
+                "contentType": "video",
+                "durationSeconds": "10",
+                "categories": json.dumps(["Other"]),
+                "placements": json.dumps(["dashboard"]),
+                "active": "true",
+                "media": (BytesIO(b"plain text, not a video"), "clip.mp4", "video/mp4"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(fake.status_code, 400, fake.get_data(as_text=True))
+        real = self.client.post(
+            "/api/admin/ads",
+            data={
+                "name": "Real video",
+                "contentType": "video",
+                "durationSeconds": "10",
+                "categories": json.dumps(["Other"]),
+                "placements": json.dumps(["dashboard"]),
+                "active": "true",
+                "media": (
+                    BytesIO(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64),
+                    "clip.mp4",
+                    "video/mp4",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(real.status_code, 201, real.get_data(as_text=True))
+        served = self.client.get(f"/media/ads/{real.json['ad']['mediaId']}")
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.mimetype, "video/mp4")
+        served.close()
+
+    def test_ad_events_are_recorded(self):
+        ad = self.create_ad()
+        self.client.post("/logout")
+        self.fresh_csrf()
+        response = self.client.post(
+            "/api/ads/events",
+            json={
+                "adId": ad["id"],
+                "event": "started",
+                "placement": "home",
+                "category": "Salon",
+                "providerId": None,
+            },
+        )
+        self.assertEqual(response.status_code, 204, response.get_data(as_text=True))
+        events = self.store.list("ad_events")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "started")
+        bad = self.client.post(
+            "/api/ads/events",
+            json={"adId": ad["id"], "event": "clicked", "placement": "home"},
+        )
+        self.assertEqual(bad.status_code, 400)
+
+    def test_admin_ads_filters(self):
+        self.create_ad(name="One")
+        self.create_ad(
+            name="Two", contentType="text", textContent="Clinic offer",
+            categories=json.dumps(["Healthcare"]), active="false",
+        )
+        self.login_admin()
+        all_ads = self.client.get("/api/admin/ads").json["ads"]
+        self.assertEqual(len(all_ads), 2)
+        active = self.client.get("/api/admin/ads?status=active").json["ads"]
+        self.assertEqual([item["name"] for item in active], ["One"])
+        clinic = self.client.get("/api/admin/ads?category=Healthcare").json["ads"]
+        self.assertEqual([item["name"] for item in clinic], ["Two"])
+
+    def test_ads_migration_creates_tables(self):
+        migration = Path("migrations/005_advertisements.sql").read_text()
+        self.assertIn("advertisements", migration)
+        self.assertIn("ad_media", migration)
+        self.assertIn("ad_events", migration)
+
 
 
 if __name__ == "__main__":

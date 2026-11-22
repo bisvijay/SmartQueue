@@ -55,6 +55,10 @@ DEFAULT_PROVIDER_TIMEZONE = "Asia/Kolkata"
 # enough real services have been recorded for them to be meaningful.
 MIN_STAT_SAMPLES = 3
 TIME_INPUT = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+AD_PLACEMENTS = {"home", "dashboard"}
+AD_CONTENT_TYPES = {"image", "video", "text"}
+AD_EVENT_TYPES = {"started", "completed", "failed"}
+MAX_AD_VIDEO_BYTES = 10 * 1024 * 1024
 
 
 class ApiError(Exception):
@@ -68,7 +72,7 @@ def create_app(test_config=None):
     app.config.from_mapping(
         DATA_DIR=ROOT / "data" / "store",
         SEED_DIR=ROOT / "data" / "seed" / "providers",
-        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 64 * 1024,
+        MAX_CONTENT_LENGTH=MAX_AD_VIDEO_BYTES + 1024 * 1024,
         SECRET_KEY=os.environ.get("SMARTQUEUE_SECRET_KEY") or secrets.token_hex(32),
         ADMIN_PASSWORD=os.environ.get("SMARTQUEUE_ADMIN_PASSWORD", ""),
         DATABASE_URL=os.environ.get("SMARTQUEUE_DATABASE_URL", ""),
@@ -799,6 +803,461 @@ def create_app(test_config=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "public, max-age=3600"
         return response
+
+    # ---- Advertisements -------------------------------------------------
+    # Ads are configured by admins, targeted by the existing provider
+    # categories, and shown by one reusable client component in two
+    # placements (home hero, provider dashboard under the QR code). Media
+    # lives in the ad_media store collection (base64), falling back to
+    # files under DATA_DIR, for the same reason provider photos do: the
+    # production filesystem is ephemeral. Uploads are capped (images
+    # 5 MB, videos 10 MB) so nothing large is stored.
+
+    def parse_ad_instant(value):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def ad_schedule_open(ad, now):
+        starts = parse_ad_instant(ad.get("startsAt"))
+        if starts is not None and now < starts:
+            return False
+        ends = parse_ad_instant(ad.get("endsAt"))
+        if ends is not None and now >= ends:
+            return False
+        return True
+
+    def public_ad(ad):
+        result = {
+            "id": ad["id"],
+            "contentType": ad.get("contentType"),
+            "durationSeconds": ad.get("durationSeconds", 8),
+            "categories": ad.get("categories", []),
+        }
+        if ad.get("contentType") == "text":
+            result["textContent"] = ad.get("textContent", "")
+        elif ad.get("mediaId"):
+            result["mediaUrl"] = url_for("ad_media_file", media_id=ad["mediaId"])
+        return result
+
+    def eligible_ads(placement, category=None, provider=None):
+        if placement == "dashboard":
+            if provider is None:
+                return []
+            if provider.get("adsEnabled", True) is False:
+                return []
+            category = provider.get("category")
+        try:
+            all_ads = store.list("advertisements")
+        except Exception:
+            # If the ads tables are not ready yet, the safe behavior is
+            # to show no advertisements at all.
+            log.warning("Advertisement list failed; serving no ads.", exc_info=True)
+            return []
+        now = datetime.now(timezone.utc)
+        matches = []
+        for ad in all_ads:
+            if ad.get("active") is not True:
+                continue
+            if placement not in (ad.get("placements") or []):
+                continue
+            if category and category not in (ad.get("categories") or []):
+                continue
+            if not ad_schedule_open(ad, now):
+                continue
+            if ad.get("contentType") in {"image", "video"} and not ad.get("mediaId"):
+                continue
+            if ad.get("contentType") == "text" and not (ad.get("textContent") or "").strip():
+                continue
+            matches.append(ad)
+        matches.sort(key=lambda ad: (-(ad.get("priority") or 0), ad.get("createdAt", ""), str(ad.get("id"))))
+        return matches
+
+    def cleaned_ad_fields(source, existing=None):
+        def raw(key, default=None):
+            if source is not None and key in source:
+                return source.get(key)
+            if existing is not None:
+                return existing.get(key, default)
+            return default
+
+        name = raw("name", "")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+            raise ApiError(400, "Advertisement name must be 1 to 120 characters.")
+        description = raw("description", "") or ""
+        if not isinstance(description, str) or len(description.strip()) > 500:
+            raise ApiError(400, "Description must be 500 characters or fewer.")
+        content_type = raw("contentType", "")
+        if content_type not in AD_CONTENT_TYPES:
+            raise ApiError(400, "Choose a content type: image, video, or text.")
+        text_content = raw("textContent", "") or ""
+        if not isinstance(text_content, str) or len(text_content.strip()) > 500:
+            raise ApiError(400, "Text content must be 500 characters or fewer.")
+        if content_type == "text" and not text_content.strip():
+            raise ApiError(400, "Text advertisements need text content.")
+        duration = raw("durationSeconds", 8)
+        if isinstance(duration, bool):
+            raise ApiError(400, "Display duration must be a whole number of seconds.")
+        try:
+            duration = int(duration)
+        except (TypeError, ValueError):
+            raise ApiError(400, "Display duration must be a whole number of seconds.")
+        if not 3 <= duration <= 120:
+            raise ApiError(400, "Display duration must be between 3 and 120 seconds.")
+
+        def cleaned_list(value, allowed, label):
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    value = [part.strip() for part in value.split(",") if part.strip()]
+            if (
+                not isinstance(value, list)
+                or not value
+                or any(item not in allowed for item in value)
+            ):
+                raise ApiError(400, label)
+            return list(dict.fromkeys(value))
+
+        categories = cleaned_list(
+            raw("categories", []), PROVIDER_CATEGORIES,
+            "Choose at least one valid service category.",
+        )
+        placements = cleaned_list(
+            raw("placements", []), AD_PLACEMENTS,
+            "Choose at least one placement: home or dashboard.",
+        )
+        starts_at = raw("startsAt") or None
+        ends_at = raw("endsAt") or None
+        starts = parse_ad_instant(starts_at) if starts_at else None
+        ends = parse_ad_instant(ends_at) if ends_at else None
+        if starts_at and starts is None:
+            raise ApiError(400, "Start date is not a valid date and time.")
+        if ends_at and ends is None:
+            raise ApiError(400, "End date is not a valid date and time.")
+        if starts and ends and ends <= starts:
+            raise ApiError(400, "End date must be after the start date.")
+        priority = raw("priority", 0)
+        if isinstance(priority, bool):
+            raise ApiError(400, "Priority must be a whole number.")
+        try:
+            priority = int(priority)
+        except (TypeError, ValueError):
+            raise ApiError(400, "Priority must be a whole number.")
+        if not 0 <= priority <= 100:
+            raise ApiError(400, "Priority must be between 0 and 100.")
+        active = raw("active", True)
+        if isinstance(active, str):
+            active = active.strip().lower() in {"true", "1", "yes", "on"}
+        return {
+            "name": name.strip(),
+            "description": description.strip(),
+            "contentType": content_type,
+            "textContent": text_content.strip(),
+            "durationSeconds": duration,
+            "categories": categories,
+            "placements": placements,
+            "startsAt": starts.isoformat() if starts else None,
+            "endsAt": ends.isoformat() if ends else None,
+            "priority": priority,
+            "active": bool(active),
+        }
+
+    def process_ad_upload(upload, content_type):
+        """Validate an ad media upload; returns (media dict, error)."""
+        filename = upload.filename or ""
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if content_type == "image":
+            if extension not in {"jpg", "jpeg", "png", "webp"}:
+                return None, "Upload a JPG, PNG, or WebP image."
+            contents = upload.stream.read(MAX_UPLOAD_BYTES + 1)
+            if len(contents) > MAX_UPLOAD_BYTES:
+                return None, "Choose an image smaller than 5 MB."
+            try:
+                with Image.open(io.BytesIO(contents)) as image:
+                    image_format = image.format
+                    if image_format not in SUPPORTED_IMAGE_FORMATS:
+                        return None, "Upload a JPEG, PNG, or WebP image."
+                    if image.width * image.height > MAX_IMAGE_PIXELS:
+                        return None, "Choose an image with dimensions under 20 megapixels."
+                    image.verify()
+            except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
+                return None, "The selected file is not a valid supported image."
+            mime = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}[image_format]
+            return {"contents": contents, "contentType": mime, "fileName": filename, "fileSize": len(contents)}, None
+        if content_type == "video":
+            if extension not in {"mp4", "webm"}:
+                return None, "Upload an MP4 or WebM video."
+            contents = upload.stream.read(MAX_AD_VIDEO_BYTES + 1)
+            if len(contents) > MAX_AD_VIDEO_BYTES:
+                return None, "Choose a video smaller than 10 MB."
+            if extension == "mp4" and contents[4:8] != b"ftyp":
+                return None, "The selected file is not a valid MP4 video."
+            if extension == "webm" and not contents.startswith(b"\x1a\x45\xdf\xa3"):
+                return None, "The selected file is not a valid WebM video."
+            mime = "video/mp4" if extension == "mp4" else "video/webm"
+            return {"contents": contents, "contentType": mime, "fileName": filename, "fileSize": len(contents)}, None
+        return None, "Text advertisements do not use a file upload."
+
+    def save_ad_media(ad_id, contents, content_type, file_name):
+        media_id = uuid.uuid4().hex
+        record = {
+            "id": media_id,
+            "adId": str(ad_id),
+            "data": base64.b64encode(contents).decode("ascii"),
+            "contentType": content_type,
+            "fileName": file_name,
+            "fileSize": len(contents),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        index_entry = {
+            "id": media_id, "adId": record["adId"], "contentType": content_type,
+            "fileName": file_name, "fileSize": len(contents), "createdAt": record["createdAt"],
+        }
+        try:
+            store.put("ad_media", media_id, record, index_entry)
+            return media_id
+        except Exception:
+            log.warning("Ad media could not be saved to the database; using file storage.", exc_info=True)
+        media_dir = Path(app.config["DATA_DIR"]) / "ad_media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        (media_dir / media_id).write_bytes(contents)
+        (media_dir / f"{media_id}.json").write_text(
+            json.dumps({"contentType": content_type, "fileName": file_name}), encoding="utf-8"
+        )
+        return media_id
+
+    def load_ad_media(media_id):
+        if not isinstance(media_id, str) or not re.fullmatch(r"[a-f0-9]{32}", media_id):
+            return None, None
+        try:
+            record = store.get("ad_media", media_id)
+        except Exception:
+            record = None
+        if record and record.get("data"):
+            try:
+                return base64.b64decode(record["data"]), record.get("contentType") or "application/octet-stream"
+            except (ValueError, TypeError):
+                pass
+        media_dir = Path(app.config["DATA_DIR"]) / "ad_media"
+        media_path = media_dir / media_id
+        if media_path.is_file():
+            content_type = "application/octet-stream"
+            sidecar = media_dir / f"{media_id}.json"
+            if sidecar.is_file():
+                try:
+                    content_type = json.loads(sidecar.read_text(encoding="utf-8")).get("contentType", content_type)
+                except (ValueError, OSError):
+                    pass
+            return media_path.read_bytes(), content_type
+        return None, None
+
+    def delete_ad_media(media_id):
+        if not isinstance(media_id, str) or not re.fullmatch(r"[a-f0-9]{32}", media_id):
+            return
+        try:
+            store.delete("ad_media", media_id)
+        except Exception:
+            pass
+        media_dir = Path(app.config["DATA_DIR"]) / "ad_media"
+        (media_dir / media_id).unlink(missing_ok=True)
+        (media_dir / f"{media_id}.json").unlink(missing_ok=True)
+
+    @app.get("/media/ads/<media_id>")
+    def ad_media_file(media_id):
+        contents, content_type = load_ad_media(media_id)
+        if contents is None:
+            abort(404)
+        response = send_file(
+            io.BytesIO(contents), mimetype=content_type, conditional=True, max_age=3600
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @app.get("/api/ads/eligible")
+    def ads_eligible():
+        placement = request.args.get("placement", "")
+        if placement not in AD_PLACEMENTS:
+            raise ApiError(400, "Placement must be home or dashboard.")
+        category = request.args.get("category") or None
+        if category is not None and category not in PROVIDER_CATEGORIES:
+            raise ApiError(400, "Choose a valid service category.")
+        provider = None
+        if placement == "dashboard":
+            provider_id = request.args.get("providerId", "")
+            if not CLIENT_ID.fullmatch(provider_id):
+                raise ApiError(400, "A valid provider ID is required.")
+            provider = store.get("providers", provider_id)
+            if provider is None:
+                raise ApiError(404, "Provider not found.")
+        ads = eligible_ads(placement, category=category, provider=provider)
+        return jsonify(ads=[public_ad(ad) for ad in ads])
+
+    @app.post("/api/ads/events")
+    def ads_events():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be a JSON object.")
+        if body.get("event") not in AD_EVENT_TYPES:
+            raise ApiError(400, "Unknown advertisement event.")
+        if body.get("placement") not in AD_PLACEMENTS:
+            raise ApiError(400, "Placement must be home or dashboard.")
+        ad_id = body.get("adId")
+        ad = None
+        if isinstance(ad_id, str) and CLIENT_ID.fullmatch(ad_id):
+            try:
+                ad = store.get("advertisements", ad_id)
+            except Exception:
+                ad = None
+        if ad is None:
+            raise ApiError(404, "Advertisement not found.")
+        category = body.get("category")
+        if category is not None and category not in PROVIDER_CATEGORIES:
+            category = None
+        provider_id = body.get("providerId")
+        if not isinstance(provider_id, str) or not CLIENT_ID.fullmatch(provider_id):
+            provider_id = None
+        record = {
+            "id": str(uuid.uuid4()),
+            "adId": ad["id"],
+            "event": body["event"],
+            "placement": body["placement"],
+            "category": category,
+            "providerId": provider_id,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            store.create("ad_events", record["id"], record, record)
+        except Exception:
+            log.warning("Advertisement event could not be recorded.", exc_info=True)
+        return "", 204
+
+    @app.get("/api/admin/ads")
+    def admin_ads_list():
+        require_admin()
+        status = request.args.get("status") or None
+        category = request.args.get("category") or None
+        content_type = request.args.get("type") or None
+        ads = store.list("advertisements")
+        ads.sort(key=lambda ad: (ad.get("createdAt", ""), str(ad.get("id"))), reverse=True)
+        result = []
+        for ad in ads:
+            if status == "active" and ad.get("active") is not True:
+                continue
+            if status == "inactive" and ad.get("active") is True:
+                continue
+            if category and category not in (ad.get("categories") or []):
+                continue
+            if content_type and ad.get("contentType") != content_type:
+                continue
+            result.append(dict(ad))
+        return jsonify(ads=result)
+
+    @app.post("/api/admin/ads")
+    def admin_ads_create():
+        require_admin()
+        source = request.form if request.form else (request.get_json(silent=True) or {})
+        fields = cleaned_ad_fields(source)
+        upload = request.files.get("media")
+        media = None
+        if fields["contentType"] in {"image", "video"}:
+            if not upload or not upload.filename:
+                raise ApiError(400, "Choose a media file for this advertisement.")
+            media, error = process_ad_upload(upload, fields["contentType"])
+            if error:
+                raise ApiError(400, error)
+        now = datetime.now(timezone.utc).isoformat()
+        ad = {
+            "id": str(uuid.uuid4()),
+            **fields,
+            "mediaId": None,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        if media is not None:
+            ad["mediaId"] = save_ad_media(ad["id"], media["contents"], media["contentType"], media["fileName"])
+            ad["mediaFileName"] = media["fileName"]
+            ad["mediaFileSize"] = media["fileSize"]
+        store.create("advertisements", ad["id"], ad, ad)
+        log.info("ads.create ad=%s type=%s", ad["id"], ad["contentType"])
+        return jsonify(ad=dict(ad)), 201
+
+    @app.patch("/api/admin/ads/<ad_id>")
+    def admin_ads_update(ad_id):
+        require_admin()
+        if not CLIENT_ID.fullmatch(ad_id or ""):
+            raise ApiError(404, "Advertisement not found.")
+        ad = store.get("advertisements", ad_id)
+        if ad is None:
+            raise ApiError(404, "Advertisement not found.")
+        source = request.form if request.form else (request.get_json(silent=True) or {})
+        fields = cleaned_ad_fields(source, existing=ad)
+        upload = request.files.get("media")
+        has_upload = bool(upload and upload.filename)
+        if (
+            fields["contentType"] in {"image", "video"}
+            and fields["contentType"] != ad.get("contentType")
+            and not has_upload
+        ):
+            raise ApiError(400, "Upload a media file for the new content type.")
+        updated = {**ad, **fields, "updatedAt": datetime.now(timezone.utc).isoformat()}
+        old_media_id = ad.get("mediaId")
+        new_media_id = old_media_id
+        if has_upload and fields["contentType"] in {"image", "video"}:
+            media, error = process_ad_upload(upload, fields["contentType"])
+            if error:
+                raise ApiError(400, error)
+            new_media_id = save_ad_media(ad["id"], media["contents"], media["contentType"], media["fileName"])
+            updated["mediaFileName"] = media["fileName"]
+            updated["mediaFileSize"] = media["fileSize"]
+        if fields["contentType"] == "text":
+            new_media_id = None
+            updated.pop("mediaFileName", None)
+            updated.pop("mediaFileSize", None)
+        updated["mediaId"] = new_media_id
+        store.put("advertisements", ad["id"], updated, updated)
+        if old_media_id and old_media_id != new_media_id:
+            delete_ad_media(old_media_id)
+        log.info("ads.update ad=%s", ad["id"])
+        return jsonify(ad=dict(updated))
+
+    @app.delete("/api/admin/ads/<ad_id>")
+    def admin_ads_delete(ad_id):
+        require_admin()
+        if not CLIENT_ID.fullmatch(ad_id or ""):
+            raise ApiError(404, "Advertisement not found.")
+        ad = store.get("advertisements", ad_id)
+        if ad is None:
+            raise ApiError(404, "Advertisement not found.")
+        store.delete("advertisements", ad["id"])
+        if ad.get("mediaId"):
+            delete_ad_media(ad["mediaId"])
+        log.info("ads.delete ad=%s", ad["id"])
+        return jsonify(ok=True)
+
+    @app.patch("/api/admin/providers/<provider_id>/ads-permission")
+    def update_provider_ads_permission(provider_id):
+        require_admin()
+        body = request.get_json(silent=True)
+        if (
+            not isinstance(body, dict)
+            or set(body) - {"adsEnabled"}
+            or not isinstance(body.get("adsEnabled"), bool)
+        ):
+            raise ApiError(400, "Provide adsEnabled as true or false.")
+        with store.transaction():
+            store.lock_providers([provider_id])
+            provider = require_provider(provider_id)
+            provider["adsEnabled"] = body["adsEnabled"]
+            store.put("providers", str(provider["id"]), provider, provider)
+            log.info("ads.permission provider=%s enabled=%s", provider["id"], body["adsEnabled"])
+            return jsonify(provider=provider)
 
     @app.before_request
     def initialize_data():
