@@ -148,7 +148,7 @@
     "Say hello": "संपर्क करें",
     "Contact us": "हमसे संपर्क करें",
     "Privacy & terms": "गोपनीयता और शर्तें",
-    "© 2025 NextInQueue. Your time is yours.": "© 2025 NextInQueue। आपका समय, आपका है।",
+    "© 2026 NextInQueue. Your time is yours.": "© 2026 NextInQueue। आपका समय, आपका है।",
     "Your time is yours.": "आपका समय, आपका है।",
     "Made for the in-between moments.": "बीच के पलों के लिए बनाया गया।",
     "← Back to NextInQueue": "← NextInQueue पर वापस जाएँ",
