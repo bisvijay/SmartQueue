@@ -242,7 +242,8 @@ h1, h2, h3, p { margin-top: 0; }
 .dashboard-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .dashboard-top .eyebrow { margin-bottom: 10px; }
 .dashboard-top h1 { margin: 0; font-family: var(--display); font-size: 31px; letter-spacing: -1.4px; }
-.dashboard-top.has-photo { min-height: 158px; padding: 26px 28px; border: 1px solid var(--line); border-radius: 16px; background-image: linear-gradient(100deg, rgba(247, 248, 245, .94) 25%, rgba(247, 248, 245, .78) 60%, rgba(247, 248, 245, .55)), var(--provider-photo); background-size: cover; background-position: center; }
+.dashboard-top.has-photo { min-height: 158px; padding: 26px 28px; border: 1px solid var(--line); border-radius: 16px; background-image: linear-gradient(100deg, rgba(247, 248, 245, .84) 25%, rgba(247, 248, 245, .55) 60%, rgba(247, 248, 245, .28)), var(--provider-photo); background-size: cover; background-position: center; }
+.dashboard-top.has-photo .eyebrow, .dashboard-top.has-photo h1, .dashboard-top.has-photo .dashboard-subtitle { text-shadow: 0 1px 10px rgba(247, 248, 245, .9), 0 0 3px rgba(247, 248, 245, .9); }
 .dashboard-top h1 span { color: #7c9a73; font-size: 21px; }
 .dashboard-subtitle { margin: 8px 0 0; color: #828a81; font-size: 11px; }
 .dashboard-top > .button { min-height: 39px; font-size: 10px; }
