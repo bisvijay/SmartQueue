@@ -2198,7 +2198,8 @@ class ApiTests(unittest.TestCase):
         # It shows beside the business name on the provider dashboard and
         # on the discover card.
         dashboard = self.client.get("/?view=provider")
-        self.assertIn(b"dashboard-provider-photo", dashboard.data)
+        self.assertIn(b"dashboard-top has-photo", dashboard.data)
+        self.assertIn(f"--provider-photo: url('/media/providers/{photo_id}')".encode(), dashboard.data)
         card = self.client.get("/")
         self.assertIn(b"provider-photo", card.data)
 
