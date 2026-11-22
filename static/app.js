@@ -506,9 +506,17 @@
       const form = event.currentTarget;
       const values = new FormData(form);
       const submit = form.querySelector('button[type="submit"]');
+      const notice = document.querySelector("#walk-in-notice");
+      const showNotice = (message, isError = false) => {
+        if (!notice) return;
+        notice.textContent = message;
+        notice.classList.toggle("error", isError);
+        notice.hidden = false;
+      };
       submit.disabled = true;
+      if (notice) notice.hidden = true;
       try {
-        await api(`/api/providers/${encodeURIComponent(providerId)}/walk-ins`, {
+        const result = await api(`/api/providers/${encodeURIComponent(providerId)}/walk-ins`, {
           method: "POST",
           body: JSON.stringify({
             name: values.get("name"),
@@ -521,8 +529,9 @@
         form.reset();
         selectQueueFilter("active");
         await refreshProviderQueue();
+        showNotice(result.queue?.buffer ? "Added to the buffer waitlist — today's queue is full." : "Walk-in added to the queue.");
       } catch (error) {
-        showError(error.message);
+        showNotice(error.message, true);
       } finally {
         submit.disabled = false;
       }

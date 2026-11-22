@@ -324,6 +324,7 @@ h1, h2, h3, p { margin-top: 0; }
 .queue-table-footer .button { min-height: 32px; font-size: 8px; }
 .no-waiting { padding: 30px 0; color: #7e887d; font-size: 11px; text-align: center; }
 .inline-notice { margin: 12px 0 0; color: #507451; font-size: 9px; }
+.inline-notice.error { color: #b3261e; }
 .icon-button { border: 0; background: #f0f3ee; width: 27px; height: 27px; border-radius: 6px; color: #567256; cursor: pointer; }
 .profile-summary { display: flex; align-items: center; gap: 11px; padding: 3px 0 16px; border-bottom: 1px solid #eff0ed; }
 .mini-provider-art { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 8px; color: #577558; font-size: 22px; }
@@ -667,7 +668,7 @@ html[data-theme="peacock"] {
 .join-services-heading { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
 .join-services-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .service-option { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font-size: 13px; font-weight: 600; cursor: pointer; }
-.service-option input { accent-color: var(--green); margin: 0; }
+.service-option input { width: auto !important; min-height: 0 !important; padding: 0; border: 0; background: transparent; accent-color: var(--green); margin: 0; flex: 0 0 auto; }
 .service-minutes { color: var(--muted); font-size: 11px; font-weight: 600; }
 .service-times { display: grid; gap: 8px; }
 .service-times-heading { margin: 0; color: #667166; font-size: 8px; font-weight: 700; }

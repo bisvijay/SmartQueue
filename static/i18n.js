@@ -227,6 +227,8 @@
     "dequeued customer": "हटाया गया ग्राहक",
     "dequeued customers": "हटाए गए ग्राहक",
     "Refresh": "रिफ़्रेश करें",
+    "Walk-in added to the queue.": "वॉक-इन कतार में जोड़ दिया गया है।",
+    "Added to the buffer waitlist — today's queue is full.": "बफ़र प्रतीक्षा सूची में जोड़ दिया गया है — आज की कतार भर गई है।",
     "Services report": "सेवाओं की रिपोर्ट",
     "Today": "आज",
     "This week": "इस सप्ताह",

@@ -2105,6 +2105,14 @@ class ApiTests(unittest.TestCase):
         landing = self.client.get("/")
         self.assertNotIn(b"nav-link admin-link", landing.data)
         self.assertIn(b">Admin</a>", landing.data)
+        # Walk-in feedback appears next to the form (not only in the
+        # page-top banner), and the service checkboxes are protected from
+        # the settings-form full-width input styling.
+        served_js = self.client.get("/static/app.js").data
+        self.assertIn(b"walk-in-notice", served_js)
+        self.assertIn(b"Walk-in added to the queue.", served_js)
+        served_css = self.client.get("/static/styles.css").data
+        self.assertIn(b".service-option input { width: auto !important", served_css)
 
         created = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
             "name": "Counter Guest", "phone": "98765 43210",
