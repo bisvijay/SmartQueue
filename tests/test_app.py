@@ -1801,6 +1801,7 @@ class ApiTests(unittest.TestCase):
         landing = self.client.get("/")
         self.assertIn(b"BUFFER WAITLIST", landing.data)
         self.assertIn(b"Predicted turn", landing.data)
+        self.assertIn(b'id="refresh-my-queue"', landing.data)
         self.client.post("/logout")
 
         # Serving and completing the first customer frees capacity, and the
@@ -1950,6 +1951,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"transliterateName", script.data)
         self.assertIn(b"data-i18n-name", script.data)
         self.assertIn("कुमार".encode(), script.data)
+        app_script = self.client.get("/static/app.js")
+        self.assertEqual(app_script.status_code, 200)
+        self.assertIn(b"refresh-my-queue", app_script.data)
+        self.assertIn(b"refresh-dashboard", app_script.data)
+        self.assertIn(b"300000", app_script.data)
 
     def test_multi_staff_serving_up_to_staff_count(self):
         provider_user = self.create_account("provider", "staff-owner@example.com")
@@ -2007,6 +2013,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'name="staffCount"', page.data)
         self.assertIn(b'data-staff-count="2"', page.data)
         self.assertIn(b'id="reports-card"', page.data)
+        self.assertIn(b'id="refresh-dashboard"', page.data)
 
     def test_multi_staff_migration_drops_one_serving_index(self):
         migration = Path("migrations/003_multi_staff_serving.sql").read_text()

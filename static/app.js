@@ -220,7 +220,12 @@
       }
     }));
 
-    const queuePanels = [...document.querySelectorAll("[data-queue-panel]")];
+    const myQueueRefresh = document.querySelector("#refresh-my-queue");
+  if (myQueueRefresh) {
+    myQueueRefresh.addEventListener("click", () => window.location.reload());
+  }
+
+  const queuePanels = [...document.querySelectorAll("[data-queue-panel]")];
     if (queuePanels.length) {
       const refreshQueues = async () => {
         try {
@@ -593,13 +598,16 @@
         showError(error.message);
       }
     });
+    let refreshReport = null;
     const reportsCard = document.querySelector("#reports-card");
     if (reportsCard) {
       const reportStats = reportsCard.querySelector("#report-stats");
       const reportServices = reportsCard.querySelector("#report-services");
       const reportLabel = reportsCard.querySelector("#report-label");
       const reportButtons = [...reportsCard.querySelectorAll("[data-report-period]")];
+      let activeReportPeriod = "day";
       async function loadReport(period) {
+        activeReportPeriod = period;
         reportButtons.forEach((button) => {
           const selected = button.dataset.reportPeriod === period;
           button.classList.toggle("is-selected", selected);
@@ -654,7 +662,22 @@
         button.addEventListener("click", () => loadReport(button.dataset.reportPeriod));
       });
       loadReport("day");
+      refreshReport = () => loadReport(activeReportPeriod);
     }
+
+    const refreshDashboardButton = document.querySelector("#refresh-dashboard");
+    if (refreshDashboardButton) {
+      refreshDashboardButton.addEventListener("click", async () => {
+        refreshDashboardButton.disabled = true;
+        try {
+          await refreshProviderQueue();
+          if (refreshReport) await refreshReport();
+        } finally {
+          refreshDashboardButton.disabled = false;
+        }
+      });
+    }
+    window.setInterval(() => { if (refreshReport) refreshReport(); }, 300000);
 
     window.setInterval(refreshProviderQueue, 10000);
   }

@@ -375,6 +375,7 @@ h1, h2, h3, p { margin-top: 0; }
 .report-service-row span:nth-child(2), .report-service-row span:nth-child(3) { min-width: 74px; text-align: right; }
 .report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .report-empty { color: var(--muted); font-size: 12px; }
+.my-queue-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .admin-provider-list { padding: 22px; }
 .admin-table-heading, .admin-table-row { display: grid; grid-template-columns: 1.8fr 1fr 1fr .7fr; align-items: center; gap: 15px; }
 .admin-table-heading { padding: 5px 0 10px; border-bottom: 1px solid #ecefea; color: #989e96; font-size: 7px; letter-spacing: .9px; }

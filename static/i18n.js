@@ -226,6 +226,7 @@
     "No dequeued customers.": "कोई हटाया गया ग्राहक नहीं है।",
     "dequeued customer": "हटाया गया ग्राहक",
     "dequeued customers": "हटाए गए ग्राहक",
+    "Refresh": "रिफ़्रेश करें",
     "Services report": "सेवाओं की रिपोर्ट",
     "Today": "आज",
     "This week": "इस सप्ताह",

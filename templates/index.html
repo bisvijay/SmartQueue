@@ -117,6 +117,7 @@
 
           {% if my_queues %}
           <div id="my-queue">
+          <div class="my-queue-actions"><button class="button button-outline" id="refresh-my-queue" type="button">Refresh</button></div>
           {% for item in my_queues %}
           {% set queue = item.queue %}
           {% set joined = item.provider %}
@@ -263,7 +264,7 @@
         </div>
         <div class="provider-dashboard-grid">
           <section class="dashboard-card live-queue-card">
-            <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>People in queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span></div>
+            <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>People in queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span><button class="button button-outline" id="refresh-dashboard" type="button">Refresh</button></div>
             <div class="queue-filters" role="group" aria-label="Filter queue services">
               <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
               <button class="queue-filter" type="button" data-queue-filter="completed" aria-pressed="false">Completed services</button>
