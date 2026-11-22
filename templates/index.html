@@ -58,9 +58,6 @@
             <a class="button button-dark signup-link" href="{{ url_for('register') }}">Sign up</a>
             <a class="nav-link login-link" href="{{ url_for('login') }}">Log in</a>
             {% endif %}
-            {% if not admin_authenticated %}
-            <a class="nav-link admin-link" href="{{ url_for('admin_login') }}">Admin</a>
-            {% endif %}
           </div>
         </div>
       </header>
@@ -228,7 +225,7 @@
           <div class="footer-brand">{{ logo() }}<p>Make room for what matters.<br />Less waiting starts here.</p></div>
           <div class="footer-links">
             <div><strong>Explore</strong><a href="#discover">Find a service</a><a href="#how-it-works">How it works</a></div>
-            <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><button data-view="admin">Admin</button></div>
+            <div><strong>For business</strong><button data-view="provider">Provider dashboard</button><a href="{{ url_for('admin_login') }}">Admin</a></div>
             <div><strong>Say hello</strong><a href="{{ url_for('contact') }}">Contact us</a><a href="{{ url_for('privacy_terms') }}">Privacy &amp; terms</a></div>
           </div>
         </div>
@@ -239,7 +236,7 @@
       {% if provider %}
       <main class="dashboard-page" data-provider-id="{{ provider.id }}" data-service-duration="{{ provider.serviceDuration|default(15) }}" data-staff-count="{{ provider.staffCount or 1 }}">
         <div class="dashboard-top">
-          <div><p class="eyebrow">PROVIDER SPACE</p><h1>{{ current_user.name }} <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
+          <div><p class="eyebrow">PROVIDER SPACE</p><h1><span data-i18n-name>{{ provider.name }}</span> <span>✳</span></h1><p class="dashboard-subtitle">Here’s how things are moving at {{ provider.name }}.</p></div>
           <div class="dashboard-presentation-controls">
             <button class="button button-outline" id="toggle-presentation" type="button" aria-expanded="false" aria-controls="provider-dashboard-content">Expand display</button>
             <button class="button button-dark" id="toggle-open" {% if provider.approvalStatus != 'approved' %}disabled title="Your listing must be approved first"{% endif %}><span class="status-dot"></span><span id="toggle-open-label">{% if provider.status == 'Open' %}Open for walk-ins{% else %}Paused{% endif %}</span><span aria-hidden="true">⌄</span></button>
@@ -311,6 +308,7 @@
             <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
+            <p class="provider-qr-name" data-i18n-name>{{ provider.name }}</p>
             <p>Scan to find this listing and join the queue.</p>
             {% else %}
             <p>Your listing QR code will be available after approval.</p>
@@ -370,13 +368,15 @@
               <label>Email address <small>Enter an email, a phone, or both</small><input name="email" type="email" maxlength="254" autocomplete="email" /></label>
               <label>Phone number <small>Indian numbers default to +91; use +country code otherwise</small><input name="phone" type="tel" maxlength="24" autocomplete="tel" placeholder="98765 43210" /></label>
               <label>Address (optional)<input name="address" maxlength="200" autocomplete="street-address" /></label>
-              <label>Service
-                <select name="service">
+              <div class="walkin-service-picker">
+                <span class="walkin-service-label">Service <small>You can pick more than one</small></span>
+                <div class="join-services-list">
                   {% if provider.services %}
-                  {% for service in provider.services %}<option value="{{ service }}">{{ service }}</option>{% endfor %}
-                  {% else %}<option value="General service">General service</option>{% endif %}
-                </select>
-              </label>
+                  {% for service in provider.services %}<label class="service-option"><input type="checkbox" name="services" value="{{ service }}" />{{ service }}{% set mins = (provider.serviceDurations or {}).get(service) %}{% if mins %}<span class="service-minutes">{{ mins }} min</span>{% endif %}</label>{% endfor %}
+                  {% else %}<label class="service-option"><input type="checkbox" name="services" value="General service" />General service</label>{% endif %}
+                </div>
+                {% if provider.services %}<small>If you pick none, {{ provider.services[0] }} will be booked.</small>{% endif %}
+              </div>
               <button class="button button-dark full-width" type="submit">Add to queue</button>
             </form>
             <p class="inline-notice" id="walk-in-notice" role="status" hidden></p>
@@ -397,6 +397,7 @@
           <div class="report-services" id="report-services"></div>
         </section>
         <div class="dashboard-disclaimer">Queue and business settings are saved to your NextInQueue account.</div>
+        <div class="dashboard-footer-links"><a href="{{ url_for('admin_login') }}">Admin</a></div>
         </div>
       </main>
       {% else %}

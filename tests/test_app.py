@@ -2087,6 +2087,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(own.json["report"]["served"], 0)
         self.assertEqual(own.json["report"]["services"], [])
 
+    def test_dashboard_walk_in_accepts_multiple_services(self):
+        provider_user = self.create_account("provider", "walkin-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("walkin-owner@example.com")
+
+        page = self.client.get("/?view=provider")
+        self.assertEqual(page.status_code, 200)
+        # The dashboard walk-in form offers services as checkboxes, the
+        # business name heads the dashboard, and it sits under the QR code.
+        self.assertIn(b'type="checkbox" name="services"', page.data)
+        self.assertIn(b"data-i18n-name>Jamie&#39;s Service", page.data)
+        self.assertIn(b"provider-qr-name", page.data)
+        # The Admin link lives at the bottom, not in the header.
+        self.assertNotIn(b"nav-link admin-link", page.data)
+        self.assertIn(b"dashboard-footer-links", page.data)
+        landing = self.client.get("/")
+        self.assertNotIn(b"nav-link admin-link", landing.data)
+        self.assertIn(b">Admin</a>", landing.data)
+
+        created = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Counter Guest", "phone": "98765 43210",
+            "services": ["Cut", "Color"],
+        })
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        entry = self.store.get("queues", created.json["queue"]["id"])
+        self.assertEqual(entry["service"], "Cut, Color")
+
+        # Picking none still books the provider's first service.
+        created = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "No Pick", "phone": "98765 43211", "services": [],
+        })
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        entry = self.store.get("queues", created.json["queue"]["id"])
+        self.assertEqual(entry["service"], "Cut")
+
 
 
 if __name__ == "__main__":

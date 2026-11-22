@@ -515,7 +515,7 @@
             email: values.get("email"),
             phone: values.get("phone"),
             address: values.get("address"),
-            service: values.get("service"),
+            services: values.getAll("services"),
           }),
         });
         form.reset();

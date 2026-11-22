@@ -261,6 +261,7 @@ h1, h2, h3, p { margin-top: 0; }
 .provider-qr-card .dashboard-card-heading { width: 100%; }
 .provider-qr-card p { margin: 11px 0 0; color: #7d867b; font-size: 9px; line-height: 1.5; }
 .provider-qr-code { display: block; width: min(100%, 190px); aspect-ratio: 1; background: white; }
+.provider-qr-card .provider-qr-name { margin: 10px 0 0; color: var(--ink); font-size: 13px; font-weight: 700; line-height: 1.35; }
 .walk-in-card { grid-column: 2; }
 .walk-in-card .provider-settings-form { gap: 9px; }
 .presentation-expanded { width: min(1600px, calc(100% - 32px)); padding-top: 16px; }
@@ -376,6 +377,8 @@ h1, h2, h3, p { margin-top: 0; }
 .report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .report-empty { color: var(--muted); font-size: 12px; }
 .my-queue-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.dashboard-footer-links { margin-top: 10px; font-size: 11px; }
+.dashboard-footer-links a { color: var(--muted); }
 .admin-provider-list { padding: 22px; }
 .admin-table-heading, .admin-table-row { display: grid; grid-template-columns: 1.8fr 1fr 1fr .7fr; align-items: center; gap: 15px; }
 .admin-table-heading { padding: 5px 0 10px; border-bottom: 1px solid #ecefea; color: #989e96; font-size: 7px; letter-spacing: .9px; }
