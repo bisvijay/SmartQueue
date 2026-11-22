@@ -265,9 +265,10 @@ h1, h2, h3, p { margin-top: 0; }
 .walk-in-card { grid-column: 2; }
 .walk-in-card .provider-settings-form { gap: 9px; }
 .presentation-expanded { width: min(1600px, calc(100% - 32px)); padding-top: 16px; }
-.presentation-expanded .dashboard-top { justify-content: flex-end; margin-bottom: 10px; }
+.presentation-expanded .dashboard-top { justify-content: space-between; margin-bottom: 10px; }
 .presentation-active > .site-header { display: none; }
-.presentation-expanded .dashboard-top > div:first-child,
+.presentation-expanded .dashboard-top .eyebrow,
+.presentation-expanded .dashboard-top .dashboard-subtitle { display: none; }
 .presentation-expanded .dashboard-presentation-controls #toggle-open,
 .presentation-expanded .provider-dashboard-content > * { display: none; }
 .presentation-expanded .dashboard-top .dashboard-presentation-controls { display: flex; }

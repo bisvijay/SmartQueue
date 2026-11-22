@@ -2130,6 +2130,34 @@ class ApiTests(unittest.TestCase):
         entry = self.store.get("queues", created.json["queue"]["id"])
         self.assertEqual(entry["service"], "Cut")
 
+    def test_walk_in_needs_only_email_or_phone(self):
+        provider_user = self.create_account("provider", "either-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.relogin("either-owner@example.com")
+
+        # Email alone is enough.
+        email_only = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Email Only", "email": "guest@example.com",
+        })
+        self.assertEqual(email_only.status_code, 201, email_only.get_data(as_text=True))
+
+        # Phone alone is enough.
+        phone_only = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "Phone Only", "phone": "98765 43212",
+        })
+        self.assertEqual(phone_only.status_code, 201, phone_only.get_data(as_text=True))
+
+        # But one of the two is required.
+        neither = self.client.post(f"/api/providers/{provider_id}/walk-ins", json={
+            "name": "No Contact",
+        })
+        self.assertEqual(neither.status_code, 400)
+
+        # The expanded (presentation) dashboard keeps the business name
+        # visible: the stylesheet no longer hides the title block.
+        served_css = self.client.get("/static/styles.css").data
+        self.assertNotIn(b".presentation-expanded .dashboard-top > div:first-child", served_css)
+
 
 
 if __name__ == "__main__":
