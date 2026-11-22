@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f6f7f4" />
-    <meta name="description" content="Find nearby services and spend less time waiting with NextInQueue." />
+    <meta name="description" content="Find nearby services and spend less time waiting with YouAreNext." />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <title>NextInQueue — Your place in line. Without the wait.</title>
+    <title>YouAreNext — Your time, better spent.</title>
     <script>try{var t=window.localStorage.getItem("smartqueue.theme");if(t&&t!=="classic")document.documentElement.dataset.theme=t;}catch(e){}</script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
@@ -16,8 +16,8 @@
   </head>
   <body>
     {% macro logo() -%}
-    <a class="brand" href="#home" aria-label="NextInQueue home">
-      <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png') }}" alt="Next in Line" />
+    <a class="brand" href="#home" aria-label="YouAreNext home">
+      <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png') }}" alt="YouAreNext" />
     </a>
     {%- endmacro %}
 
@@ -209,7 +209,7 @@
             <article><span>02</span><div><h3>Save your spot</h3><p>Pick your services and join in seconds. Estimates use real service times — a 5-minute eyebrow is not a 45-minute facial.</p></div></article>
             <article><span>03</span><div><h3>Arrive right on time</h3><p>Follow the queue live and reach just before your turn. The waiting happens on your phone, not in a crowd.</p></div></article>
           </div>
-          <div class="how-diagram" aria-label="How NextInQueue works, step by step">
+          <div class="how-diagram" aria-label="How YouAreNext works, step by step">
             <div class="how-node"><span class="how-node-icon" aria-hidden="true">📱</span><strong>Scan or tap</strong><small>Scan the QR at the shop, or join from home.</small></div>
             <span class="how-arrow" aria-hidden="true">→</span>
             <div class="how-node"><span class="how-node-icon" aria-hidden="true">🎫</span><strong>Get your spot</strong><small>See your number and the live wait time.</small></div>
@@ -229,7 +229,7 @@
             <div><strong>Say hello</strong><a href="{{ url_for('contact') }}">Contact us</a><a href="{{ url_for('privacy_terms') }}">Privacy &amp; terms</a></div>
           </div>
         </div>
-        <div class="footer-bottom"><span>© 2026 NextInQueue. Your time is yours.</span><span>Made for the in-between moments. <b>✳</b></span></div>
+        <div class="footer-bottom"><span>© 2026 YouAreNext. Your time is yours.</span><span>Made for the in-between moments. <b>✳</b></span></div>
       </footer>
 
       {% elif view == 'provider' %}
@@ -316,7 +316,7 @@
           </section>
           <section class="dashboard-card provider-profile-card">
             <div class="dashboard-card-heading"><div><p class="eyebrow">YOUR PLACE</p><h2>Business settings</h2></div></div>
-            <p class="provider-settings-intro">Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by NextInQueue.</p>
+            <p class="provider-settings-intro">Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by YouAreNext.</p>
             <form class="provider-photo-form" id="provider-photo-form">
               <div class="provider-photo-preview">
                 {% if provider.photoId %}
@@ -396,7 +396,7 @@
           <div class="report-stats" id="report-stats"></div>
           <div class="report-services" id="report-services"></div>
         </section>
-        <div class="dashboard-disclaimer">Queue and business settings are saved to your NextInQueue account.</div>
+        <div class="dashboard-disclaimer">Queue and business settings are saved to your YouAreNext account.</div>
         <div class="dashboard-footer-links"><a href="{{ url_for('admin_login') }}">Admin</a></div>
         </div>
       </main>
@@ -406,7 +406,7 @@
 
       {% else %}
       <main class="dashboard-page admin-approval-dashboard" data-admin-dashboard>
-        <div class="dashboard-top"><div><p class="eyebrow">NEXTINQUEUE · ADMIN</p><h1>Provider approvals <span>✳</span></h1><p class="dashboard-subtitle">Review provider listings before they appear in customer discovery.</p></div><span class="demo-admin-badge">Private admin area</span></div>
+        <div class="dashboard-top"><div><p class="eyebrow">YOUARENEXT · ADMIN</p><h1>Provider approvals <span>✳</span></h1><p class="dashboard-subtitle">Review provider listings before they appear in customer discovery.</p></div><span class="demo-admin-badge">Private admin area</span></div>
         <div class="metric-grid">
           {% set pending_providers = admin_providers|selectattr('approvalStatus', 'equalto', 'pending')|list %}
           {% set approved_providers = admin_providers|selectattr('approvalStatus', 'equalto', 'approved')|list %}

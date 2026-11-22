@@ -1,4 +1,4 @@
-/* NextInQueue theme picker: festive Indian color themes, kept simple and
+/* YouAreNext theme picker: festive Indian color themes, kept simple and
  * sober — a theme only swaps the accent palette (CSS variables in
  * styles.css); layout and content never change. The choice persists in
  * localStorage, and a small inline snippet in each page's <head> applies a

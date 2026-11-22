@@ -1,6 +1,6 @@
-# NextInQueue deployment runbook (Render + Supabase)
+# YouAreNext deployment runbook (Render + Supabase)
 
-Everything needed to deploy NextInQueue to production, written down so the
+Everything needed to deploy YouAreNext to production, written down so the
 steps never have to be rediscovered. The live **dev** deployment followed
 exactly this path (Render service `smartqueue`, Oregon region, pointed at
 the Oregon dev Supabase project) — production is the same recipe with the
@@ -65,7 +65,7 @@ import into empty tables.
 - **Root certificate:** the `supabase-root.crt` file (kept locally at
   `C:\Users\bisvi\supabase-root.crt`; also downloadable from the Supabase
   dashboard under Project Settings → Database → SSL configuration).
-- **Admin password:** choose one for the NextInQueue admin login.
+- **Admin password:** choose one for the YouAreNext admin login.
 - **Secret key:** let Render's **Generate** button create it.
 
 ### 4. Create the Render web service
@@ -102,7 +102,7 @@ Render dashboard → **New + → Web Service** → repo `bisvijay/SmartQueue`:
 
 ### 6. Verify (checklist)
 
-- [ ] Service URL loads the NextInQueue home page with provider listings
+- [ ] Service URL loads the YouAreNext home page with provider listings
       (not a JSON `{"error": ...}` page).
 - [ ] Render **Logs** show `SmartQueue app created: store=postgres`.
 - [ ] Logs show `GET /` returning **200**, and no

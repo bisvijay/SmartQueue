@@ -1,4 +1,4 @@
-/* NextInQueue language picker: English / Hindi (हिंदी).
+/* YouAreNext language picker: English / Hindi (हिंदी).
  *
  * The app renders English on the server. When the visitor picks Hindi, this
  * script translates visible UI text in place using the dictionary below and
@@ -28,7 +28,7 @@
     "Create account": "खाता बनाएँ",
     "Create an account": "खाता बनाएँ",
     "Customer discovery": "ग्राहक खोज",
-    "NextInQueue home": "NextInQueue होम",
+    "YouAreNext home": "YouAreNext होम",
     "Administrator": "प्रशासक",
     "Admin": "एडमिन",
     "Administrator sign in": "प्रशासक साइन इन",
@@ -59,12 +59,12 @@
     "Walk in when you're called. No standing in line.": "बुलाए जाने पर अंदर जाएँ। लाइन में खड़े होने की ज़रूरत नहीं।",
     // Contact and legal pages
     "SAY HELLO": "नमस्ते कहें",
-    "Questions about a queue, your account, or listing your business on NextInQueue? We read every message and reply as quickly as we can.": "किसी कतार, अपने खाते, या NextInQueue पर अपना व्यवसाय जोड़ने के बारे में सवाल? हम हर संदेश पढ़ते हैं और जितनी जल्दी हो सके जवाब देते हैं।",
+    "Questions about a queue, your account, or listing your business on YouAreNext? We read every message and reply as quickly as we can.": "किसी कतार, अपने खाते, या YouAreNext पर अपना व्यवसाय जोड़ने के बारे में सवाल? हम हर संदेश पढ़ते हैं और जितनी जल्दी हो सके जवाब देते हैं।",
     "Write to us": "हमें लिखें",
     "Visit us": "हमसे मिलें",
     "For businesses": "व्यवसायों के लिए",
-    "Contact us — NextInQueue": "हमसे संपर्क करें — NextInQueue",
-    "Privacy & terms — NextInQueue": "गोपनीयता और शर्तें — NextInQueue",
+    "Contact us — YouAreNext": "हमसे संपर्क करें — YouAreNext",
+    "Privacy & terms — YouAreNext": "गोपनीयता और शर्तें — YouAreNext",
 
     // Discover
     "THE GOOD STUFF, RIGHT AROUND YOU": "सबसे अच्छी चीज़ें, बिल्कुल आपके आस-पास",
@@ -148,10 +148,10 @@
     "Say hello": "संपर्क करें",
     "Contact us": "हमसे संपर्क करें",
     "Privacy & terms": "गोपनीयता और शर्तें",
-    "© 2026 NextInQueue. Your time is yours.": "© 2026 NextInQueue। आपका समय, आपका है।",
+    "© 2026 YouAreNext. Your time is yours.": "© 2026 YouAreNext। आपका समय, आपका है।",
     "Your time is yours.": "आपका समय, आपका है।",
     "Made for the in-between moments.": "बीच के पलों के लिए बनाया गया।",
-    "← Back to NextInQueue": "← NextInQueue पर वापस जाएँ",
+    "← Back to YouAreNext": "← YouAreNext पर वापस जाएँ",
 
     // Provider dashboard
     "PROVIDER SPACE": "प्रदाता क्षेत्र",
@@ -191,7 +191,7 @@
     "Your listing QR code will be available after approval.": "अनुमोदन के बाद आपकी लिस्टिंग का QR कोड उपलब्ध होगा।",
     "YOUR PLACE": "आपकी जगह",
     "Business settings": "व्यवसाय सेटिंग",
-    "Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by NextInQueue.": "वे विवरण बदलें जो ग्राहक आपकी लिस्टिंग पर देखते हैं। कतार संख्या, रेटिंग और समीक्षाएँ NextInQueue द्वारा प्रबंधित होती हैं।",
+    "Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by YouAreNext.": "वे विवरण बदलें जो ग्राहक आपकी लिस्टिंग पर देखते हैं। कतार संख्या, रेटिंग और समीक्षाएँ YouAreNext द्वारा प्रबंधित होती हैं।",
     "No listing photo": "कोई लिस्टिंग फ़ोटो नहीं",
     "Business photo": "व्यवसाय फ़ोटो",
     "Profile photo": "प्रोफ़ाइल फ़ोटो",
@@ -276,7 +276,7 @@
     "General service": "सामान्य सेवा",
     "Add to queue": "कतार में जोड़ें",
     "Walk-ins can be added after your listing is approved.": "आपकी लिस्टिंग स्वीकृत होने के बाद वॉक-इन जोड़े जा सकते हैं।",
-    "Queue and business settings are saved to your NextInQueue account.": "कतार और व्यवसाय सेटिंग आपके NextInQueue खाते में सहेजी जाती हैं।",
+    "Queue and business settings are saved to your YouAreNext account.": "कतार और व्यवसाय सेटिंग आपके YouAreNext खाते में सहेजी जाती हैं।",
     "Listing pending review": "लिस्टिंग समीक्षा लंबित है",
     "Listing approved": "लिस्टिंग स्वीकृत",
     "Listing rejected": "लिस्टिंग अस्वीकृत",
@@ -287,7 +287,7 @@
     "No provider records found.": "कोई प्रदाता रिकॉर्ड नहीं मिला।",
 
     // Admin approvals
-    "NEXTINQUEUE · ADMIN": "NEXTINQUEUE · एडमिन",
+    "YOUARENEXT · ADMIN": "YOUARENEXT · एडमिन",
     "Provider approvals": "प्रदाता स्वीकृतियाँ",
     "Review provider listings before they appear in customer discovery.": "ग्राहक खोज में दिखने से पहले प्रदाता लिस्टिंग की समीक्षा करें।",
     "Private admin area": "निजी एडमिन क्षेत्र",
@@ -321,16 +321,16 @@
     "Email address or phone number": "ईमेल पता या फ़ोन नंबर",
     "Password": "पासवर्ड",
     "Reset password": "पासवर्ड रीसेट करें",
-    "New to NextInQueue?": "NextInQueue पर नए हैं?",
+    "New to YouAreNext?": "YouAreNext पर नए हैं?",
 
     // Registration
-    "WELCOME TO NEXTINQUEUE": "NEXTINQUEUE में आपका स्वागत है",
+    "WELCOME TO YOUARENEXT": "YOUARENEXT में आपका स्वागत है",
     "Make room for": "अपने दिन के लिए",
-    "Create an account to find your place in line or bring your business to NextInQueue.": "लाइन में अपनी जगह पाने या अपने व्यवसाय को NextInQueue पर लाने के लिए खाता बनाएँ।",
+    "Create an account to find your place in line or bring your business to YouAreNext.": "लाइन में अपनी जगह पाने या अपने व्यवसाय को YouAreNext पर लाने के लिए खाता बनाएँ।",
     "Your account is ready. Sign in to manage your business or start finding your place in line.": "आपका खाता तैयार है। अपना व्यवसाय प्रबंधित करने या लाइन में अपनी जगह खोजने के लिए साइन इन करें।",
     "Registration complete": "पंजीकरण पूरा हुआ",
     "Your account has been saved. You can now sign in.": "आपका खाता सहेजा गया है। अब आप साइन इन कर सकते हैं।",
-    "Log in to NextInQueue": "NextInQueue में लॉग इन करें",
+    "Log in to YouAreNext": "YouAreNext में लॉग इन करें",
     "Please review your details.": "कृपया अपने विवरण जांचें।",
     "I’m joining as": "मैं इस रूप में शामिल हो रहा हूँ",
     "Find and join queues": "कतारें खोजें और शामिल हों",
@@ -376,7 +376,7 @@
     "Full name": "पूरा नाम",
 
     // Administrator sign in
-    "NEXTINQUEUE ADMIN": "NEXTINQUEUE एडमिन",
+    "YOUARENEXT ADMIN": "YOUARENEXT एडमिन",
     "Review provider": "प्रदाता लिस्टिंग की",
     "listings.": "समीक्षा करें।",
     "Sign in to approve or reject businesses before they appear in customer discovery.": "ग्राहक खोज में दिखने से पहले व्यवसायों को स्वीकृत या अस्वीकृत करने के लिए साइन इन करें।",
@@ -384,11 +384,11 @@
     "Provider listings require approval.": "प्रदाता लिस्टिंग के लिए स्वीकृति आवश्यक है।",
 
     // Page titles
-    "NextInQueue — Your place in line. Without the wait.": "NextInQueue — लाइन में आपकी जगह। बिना इंतज़ार के।",
-    "Log in — NextInQueue": "लॉग इन — NextInQueue",
-    "Create your account — NextInQueue": "अपना खाता बनाएँ — NextInQueue",
-    "Reset password — NextInQueue": "पासवर्ड रीसेट करें — NextInQueue",
-    "Administrator sign in — NextInQueue": "प्रशासक साइन इन — NextInQueue",
+    "YouAreNext — Your time, better spent.": "YouAreNext — आपका समय, बेहतर उपयोग।",
+    "Log in — YouAreNext": "लॉग इन — YouAreNext",
+    "Create your account — YouAreNext": "अपना खाता बनाएँ — YouAreNext",
+    "Reset password — YouAreNext": "पासवर्ड रीसेट करें — YouAreNext",
+    "Administrator sign in — YouAreNext": "प्रशासक साइन इन — YouAreNext",
   };
 
   // Parameterized strings: [pattern, replacement] applied to the trimmed text.
@@ -407,7 +407,7 @@
     [/^Services: (.+) · Hours: (.+)$/, "सेवाएँ: $1 · समय: $2"],
     [/^Review note: (.+)$/, "समीक्षा नोट: $1"],
     [/^Joined (.+)$/, "शामिल हुए: $1"],
-    [/^Join (.+)’s queue — NextInQueue$/, "$1 की कतार में शामिल हों — NextInQueue"],
+    [/^Join (.+)’s queue — YouAreNext$/, "$1 की कतार में शामिल हों — YouAreNext"],
     [/^Join (.+)’s queue\.$/, "$1 की कतार में शामिल हों।"],
     [/^Nothing picked\? We’ll book “(.+)”\.$/, "कुछ नहीं चुना? हम “$1” बुक करेंगे।"],
     [/^Service: (.+)$/, "सेवा: $1"],

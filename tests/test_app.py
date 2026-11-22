@@ -287,11 +287,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Willow &amp; Sage", response.data)
         self.assertIn(b"Sign up", response.data)
-        self.assertIn(b"\xc2\xa9 2026 NextInQueue", response.data)
+        self.assertIn(b"\xc2\xa9 2026 YouAreNext", response.data)
         self.assertNotIn(b"\xc2\xa9 2025", response.data)
         dictionary = self.client.get("/static/i18n.js")
         self.assertEqual(dictionary.status_code, 200)
-        self.assertIn(b"\xc2\xa9 2026 NextInQueue", dictionary.data)
+        self.assertIn(b"\xc2\xa9 2026 YouAreNext", dictionary.data)
         self.assertNotIn(b"\xc2\xa9 2025", dictionary.data)
         dictionary.close()
         self.assertEqual(len(self.store.list("providers")), 4)
@@ -644,9 +644,9 @@ class ApiTests(unittest.TestCase):
 
     def test_tagline_hero_card_and_info_pages(self):
         home = self.client.get("/")
-        self.assertIn(b"Your place in line. Without the wait.", home.data)
+        self.assertIn(b"Your time, better spent.", home.data)
         self.assertIn(b"<em>Without the wait.</em>", home.data)
-        self.assertNotIn(b"Your time, better spent", home.data)
+        self.assertNotIn(b"Your place in line. Without the wait.", home.data)
         self.assertNotIn(b"YOUR SPOT IS SAVED", home.data)
         self.assertIn(b"how-diagram", home.data)
         self.assertIn(b"Scan or tap", home.data)
@@ -655,7 +655,7 @@ class ApiTests(unittest.TestCase):
 
         contact = self.client.get("/contact")
         self.assertEqual(contact.status_code, 200)
-        self.assertIn(b"info@nextinqueue.in", contact.data)
+        self.assertIn(b"info@youarenext.in", contact.data)
         self.assertIn(b"Ward No 37", contact.data)
         self.assertIn(b"Bettiah, Pin - 845438", contact.data)
 
@@ -1708,7 +1708,7 @@ class ApiTests(unittest.TestCase):
 
         self.client.post("/logout")
         register = self.client.get("/register?created=1")
-        self.assertIn(b"Log in to NextInQueue", register.data)
+        self.assertIn(b"Log in to YouAreNext", register.data)
         self.assertNotIn(b"will be added separately", register.data)
 
     def relogin(self, identifier):
