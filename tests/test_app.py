@@ -210,6 +210,152 @@ class PostgresStoreTests(unittest.TestCase):
             self.assertTrue(app.config["POSTGRES_ENABLED"])
             self.assertIsInstance(app.extensions["smartqueue_store"], PostgresStore)
 
+    def test_provider_registration_works_when_postgres_is_enabled(self):
+        # Regression: with Postgres enabled, provider IDs are UUID strings.
+        # Registration used to crash building the provider record with
+        # int(provider_id) on a UUID, so every live provider signup 500'd.
+        import contextlib
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app({
+                "TESTING": True,
+                "DATA_DIR": Path(temp_dir) / "store",
+                "SEED_DIR": ROOT / "data" / "seed" / "providers",
+                "DATABASE_URL": "postgresql://user:password@localhost/smartqueue",
+            })
+            self.assertTrue(app.config["POSTGRES_ENABLED"])
+            store = app.extensions["smartqueue_store"]
+            records = {"users": {}, "providers": {}}
+
+            def fake_list(collection):
+                return [dict(record) for record in records[collection].values()]
+
+            def fake_create(collection, record_id, record, index_entry):
+                if record_id in records[collection]:
+                    return False
+                records[collection][record_id] = dict(record)
+                return True
+
+            def fake_get(collection, record_id):
+                record = records[collection].get(str(record_id))
+                return dict(record) if record else None
+
+            def fake_delete(collection, record_id):
+                records[collection].pop(str(record_id), None)
+
+            store.list = fake_list
+            store.create = fake_create
+            store.get = fake_get
+            store.delete = fake_delete
+            store.transaction = lambda: contextlib.nullcontext()
+
+            client = app.test_client()
+            page = client.get("/register")
+            token = re.search(rb'name="csrf-token" content="([^"]+)"', page.data).group(1).decode()
+            client.environ_base["HTTP_X_CSRF_TOKEN"] = token
+            response = client.post("/register", data={
+                "name": "Jamie Rivera",
+                "email": "jamie@example.com",
+                "phone": "",
+                "password": "correct horse battery",
+                "confirm_password": "correct horse battery",
+                "role": "provider",
+                "business_name": "Jamie's Service",
+                "category": "Salon",
+                "address": "123 Main Street, Seattle",
+                "services": "Cut, Color",
+            })
+            self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
+            self.assertEqual(len(records["providers"]), 1)
+            provider = next(iter(records["providers"].values()))
+            # The provider ID must stay the UUID string Postgres uses.
+            self.assertEqual(_uuid(provider["id"]), provider["id"])
+            self.assertEqual(provider["approvalStatus"], "pending")
+            user = next(iter(records["users"].values()))
+            self.assertEqual(user["providerId"], provider["id"])
+
+    def test_ad_creation_saves_ad_before_its_media_when_postgres_is_enabled(self):
+        # Regression: ad_media references advertisements with a foreign key,
+        # so creating media before the advertisement row fails on Postgres
+        # and the upload silently falls back to ephemeral file storage.
+        import contextlib
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = create_app({
+                "TESTING": True,
+                "DATA_DIR": Path(temp_dir) / "store",
+                "SEED_DIR": ROOT / "data" / "seed" / "providers",
+                "DATABASE_URL": "postgresql://user:password@localhost/smartqueue",
+                "ADMIN_PASSWORD": "test-admin-password",
+            })
+            self.assertTrue(app.config["POSTGRES_ENABLED"])
+            store = app.extensions["smartqueue_store"]
+            records = {"users": {}, "providers": {}, "advertisements": {}, "ad_media": {}}
+
+            def fake_list(collection):
+                return [dict(record) for record in records[collection].values()]
+
+            def fake_create(collection, record_id, record, index_entry):
+                if record_id in records[collection]:
+                    return False
+                records[collection][record_id] = dict(record)
+                return True
+
+            def fake_put(collection, record_id, record, index_entry):
+                if collection == "ad_media" and record["adId"] not in records["advertisements"]:
+                    raise RuntimeError("foreign key violation: ad_media_ad_id_fkey")
+                records[collection][record_id] = dict(record)
+                return True
+
+            def fake_get(collection, record_id):
+                record = records[collection].get(str(record_id))
+                return dict(record) if record else None
+
+            def fake_delete(collection, record_id):
+                records[collection].pop(str(record_id), None)
+
+            store.list = fake_list
+            store.create = fake_create
+            store.put = fake_put
+            store.get = fake_get
+            store.delete = fake_delete
+            store.transaction = lambda: contextlib.nullcontext()
+
+            client = app.test_client()
+            page = client.get("/admin/login")
+            token = re.search(rb'name="csrf_token" value="([^"]+)"', page.data).group(1).decode()
+            login = client.post("/admin/login", data={"password": "test-admin-password", "csrf_token": token})
+            self.assertEqual(login.status_code, 303, login.get_data(as_text=True))
+            with client.session_transaction() as browser_session:
+                client.environ_base["HTTP_X_CSRF_TOKEN"] = browser_session["csrf_token"]
+
+            image_buffer = BytesIO()
+            Image.new("RGB", (64, 40), color=(200, 90, 40)).save(image_buffer, format="PNG")
+            image_buffer.seek(0)
+            created = client.post(
+                "/api/admin/ads",
+                data={
+                    "name": "Banner",
+                    "contentType": "image",
+                    "durationSeconds": "5",
+                    "categories": json.dumps(["Salon"]),
+                    "placements": json.dumps(["home"]),
+                    "active": "true",
+                    "media": (image_buffer, "banner.png", "image/png"),
+                },
+                content_type="multipart/form-data",
+            )
+            self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+            ad = created.json["ad"]
+            self.assertTrue(ad["mediaId"])
+            # The media must have landed in the (stub) database, which only
+            # accepts it once the advertisement row exists — not in the
+            # file-storage fallback under DATA_DIR.
+            self.assertEqual(len(records["ad_media"]), 1)
+            media_record = next(iter(records["ad_media"].values()))
+            self.assertEqual(media_record["adId"], ad["id"])
+            self.assertFalse((Path(temp_dir) / "store" / "ad_media").exists())
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self):

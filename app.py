@@ -1180,11 +1180,15 @@ def create_app(test_config=None):
             "createdAt": now,
             "updatedAt": now,
         }
+        store.create("advertisements", ad["id"], ad, ad)
         if media is not None:
+            # The advertisement row must exist before its media: ad_media
+            # references it with a foreign key, so saving media first fails
+            # on Postgres and silently falls back to ephemeral file storage.
             ad["mediaId"] = save_ad_media(ad["id"], media["contents"], media["contentType"], media["fileName"])
             ad["mediaFileName"] = media["fileName"]
             ad["mediaFileSize"] = media["fileSize"]
-        store.create("advertisements", ad["id"], ad, ad)
+            store.put("advertisements", ad["id"], ad, ad)
         log.info("ads.create ad=%s type=%s", ad["id"], ad["contentType"])
         return jsonify(ad=dict(ad)), 201
 
@@ -1617,7 +1621,7 @@ def create_app(test_config=None):
                 )
                 accent, icon = PROVIDER_CATEGORIES[form["category"]]
                 provider = {
-                    "id": int(provider_id),
+                    "id": provider_id if app.config["POSTGRES_ENABLED"] else int(provider_id),
                     "ownerId": user_id,
                     "name": form["business_name"],
                     "category": form["category"],
