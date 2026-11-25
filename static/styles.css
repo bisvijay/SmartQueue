@@ -272,7 +272,7 @@ h1, h2, h3, p { margin-top: 0; }
 .presentation-expanded .provider-dashboard-content > * { display: none; }
 .presentation-expanded .dashboard-top .dashboard-presentation-controls { display: flex; }
 .presentation-expanded .provider-dashboard-content { display: block; height: calc(100vh - 138px); min-height: 340px; }
-.presentation-expanded .provider-dashboard-grid { display: grid; height: 100%; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "queue qr" "queue walkin"; gap: 12px; }
+.presentation-expanded .provider-dashboard-grid { display: grid; height: 100%; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "queue qr" "queue walkin"; gap: 12px; }
 .presentation-expanded .provider-dashboard-grid > :not(.live-queue-card, .provider-qr-card, .walk-in-card) { display: none; }
 .presentation-expanded .live-queue-card,
 .presentation-expanded .provider-qr-card,
@@ -743,10 +743,10 @@ html[data-theme="peacock"] {
 .ad-slot[hidden] { display: none !important; }
 .ad-creative { position: relative; background: #fffefa; border: 1px solid var(--accent-glow); border-radius: 12px; box-shadow: 0 14px 34px rgba(52, 75, 53, .12); padding: 10px; }
 .ad-tag { position: absolute; top: 8px; right: 8px; z-index: 1; background: rgba(31, 41, 32, .72); color: #fff; font-size: 8px; font-weight: 700; letter-spacing: 1.2px; padding: 2px 6px; border-radius: 999px; text-transform: uppercase; }
-.ad-media { display: block; width: 100%; max-height: 230px; object-fit: contain; border-radius: 8px; background: #f4f1e6; }
+.ad-media { display: block; width: 100%; max-height: 320px; object-fit: contain; border-radius: 8px; background: #f4f1e6; }
 .ad-text { margin: 0; padding: 16px 12px; font-size: 15px; line-height: 1.5; color: var(--ink); text-align: center; }
 .hero-inner { position: relative; }
-.ad-slot-home { position: absolute; right: 26px; top: 50%; transform: translateY(-50%); width: min(320px, 42%); z-index: 2; }
+.ad-slot-home { position: absolute; right: 26px; top: 50%; transform: translateY(-50%); width: min(400px, 46%); z-index: 2; }
 .ad-slot-dashboard { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--accent-glow); }
 .ad-slot-dashboard .ad-creative { box-shadow: none; }
 .ads-permission-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; cursor: pointer; margin-top: 8px; }
@@ -771,7 +771,7 @@ html[data-theme="peacock"] {
 .ad-preview-controls label { display: grid; gap: 5px; font-size: 10px; font-weight: 700; }
 .ad-preview-controls select { min-height: 34px; border: 1px solid #d8dcd2; border-radius: 8px; padding: 5px 9px; background: #fff; }
 .ad-preview-frame { background: linear-gradient(135deg, var(--accent-wash), var(--accent-soft)); border-radius: 12px; padding: 22px; display: flex; justify-content: center; }
-.ad-preview-frame .ad-slot { position: static; transform: none; width: min(320px, 100%); margin: 0; border-top: 0; padding-top: 0; }
+.ad-preview-frame .ad-slot { position: static; transform: none; width: min(400px, 100%); margin: 0; border-top: 0; padding-top: 0; }
 .ad-preview-frame.is-mobile .ad-slot { width: min(300px, 100%); }
 @media (max-width: 650px) {
   .ad-slot-home { position: static; transform: none; width: auto; margin: 0 0 20px; }
