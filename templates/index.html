@@ -17,7 +17,7 @@
   </head>
   <body>
     {% macro logo() -%}
-    <a class="brand" href="#home" aria-label="YouAreNext home">
+    <a class="brand" href="{{ url_for('home') }}" aria-label="YouAreNext home">
       <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png', v='3') }}" alt="YouAreNext" />
     </a>
     {%- endmacro %}
