@@ -20,6 +20,29 @@ YouAreNext is a responsive queue-management app for customers and service provid
 4. Start the app with `.venv\Scripts\python.exe app.py` on Windows or `.venv/bin/python app.py` on macOS/Linux, then open <http://127.0.0.1:5000>.
 5. Run tests with `.venv\Scripts\python.exe -m unittest discover -s tests` on Windows or `.venv/bin/python -m unittest discover -s tests` on macOS/Linux.
 
+## Deployment & database — everything in one place
+
+To deploy YouAreNext to a **new environment**, you only need two files:
+
+- **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — the full runbook: the
+  artifact index, the Render service settings, every environment
+  variable, the custom-domain/DNS records, a step-by-step deploy, the
+  verification checklist, and troubleshooting.
+- **[docs/full-database-schema.sql](docs/full-database-schema.sql)** —
+  the complete database schema in ONE SQL file (baseline + migrations
+  001–006, in order). On an empty Postgres database (e.g. a new Supabase
+  project), paste the whole file into the SQL Editor and run it once —
+  every table, index and constraint is created; no other SQL is needed.
+
+For an **existing** database that only needs newer migrations, run
+`python scripts/prepare_postgres.py` instead (it applies `migrations/*.sql`
+in order and is safe to re-run).
+
+**Keep it current:** every new migration must be appended to
+`docs/full-database-schema.sql` and recorded in the migration table in
+`docs/DEPLOYMENT.md` in the same change, so a fresh deploy never needs
+archaeology.
+
 ## Current data storage
 
 `data/seed/providers/` holds the committed sample provider records. On first startup, Flask copies them into `data/store/providers/`; subsequent provider and queue changes are persisted as individual JSON records, with a `_index.json` file in each collection. `data/store/` is git-ignored so runtime changes remain local. The storage layer exposes get, list, create, put, delete, config, and export operations.

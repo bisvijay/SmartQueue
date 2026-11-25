@@ -6,6 +6,48 @@ exactly this path (Render service `smartqueue`, Oregon region, pointed at
 the Oregon dev Supabase project) — production is the same recipe with the
 Mumbai project and a Render region near it.
 
+## Deployment artifacts — everything in one place
+
+| Artifact | Where | What it holds |
+| --- | --- | --- |
+| This runbook | `docs/DEPLOYMENT.md` | Settings, env vars, DNS, deploy steps, checks, fixes |
+| Complete database schema (ONE file) | `docs/full-database-schema.sql` | Baseline + migrations 001–006 in order — run once on an empty database |
+| Individual migrations | `migrations/001`–`006` | The same SQL, one feature per file |
+| Migration script | `scripts/prepare_postgres.py` | Applies `migrations/*.sql` to an existing database (safe to re-run); optional `--import-json` |
+| Supabase root certificate | Render secret file `supabase-root.crt` | Public root CA (not a secret); also kept locally at `C:\Users\bisvi\supabase-root.crt` |
+| Supabase migration history | `docs/SUPABASE_MIGRATION_HANDOFF.md` | How the Nov 2026 JSON → Postgres migration was done |
+
+### Migrations and where they are applied
+
+| File | What it does | Oregon dev (`tdwukdkepbtexihdaybm`) | Mumbai prod (`jubxmcxbywrticwjytzn`) |
+| --- | --- | --- | --- |
+| Baseline (in full schema, Part 1) | Core tables: accounts, providers, services, hours, queue_visits, events, metrics | Applied | Applied |
+| `001_postgres_app_compat.sql` | `app_data` columns, provider approval fields, `provider_reviews` | Applied | Applied |
+| `002_multi_queue_per_customer.sql` | One active visit per customer **per provider** | Applied | **Not confirmed — run before prod switch** |
+| `003_multi_staff_serving.sql` | Drops the one-serving-per-provider index (staffCount in app) | Applied | **Pending** |
+| `004_provider_photos.sql` | `provider_photos` table (photos stored in DB) | Applied | **Pending** |
+| `005_advertisements.sql` | `advertisements`, `ad_media`, `ad_events` tables | Applied | **Pending** |
+| `006_customer_reviews.sql` | `customer_reviews` table | **Pending — run in SQL Editor** | **Pending** |
+
+### Custom domain (youarenext.in, registrar: Hostinger)
+
+- Render custom domains on the `smartqueue` service: `youarenext.in`
+  (primary) and `www.youarenext.in` (redirects to the primary). The stale
+  `nextinqueue.in` / `www.nextinqueue.in` pair is also still listed.
+- DNS at Hostinger: `ALIAS @ → smartqueue-1t1o.onrender.com` and
+  `CNAME www → smartqueue-1t1o.onrender.com` (TTL 14400).
+- Email for `info@youarenext.in` is **not set up yet** (Zoho Mail free
+  tier is the planned route — needs MX/SPF/DKIM records at Hostinger).
+
+### Keeping this file current
+
+Whenever a change adds a database migration or changes a deployment
+setting: (1) append the migration SQL to `docs/full-database-schema.sql`
+as a new PART, (2) add/update its row in the migration table above, and
+(3) update any changed setting here — all in the same change. A new
+environment must always be deployable from this file plus the full
+schema alone.
+
 ## How it fits together
 
 - **Code:** GitHub repo `bisvijay/SmartQueue`, branch `main`. Render
@@ -46,15 +88,17 @@ local `supabase-root.crt`:
 python scripts\prepare_postgres.py
 ```
 
-This applies every file in `migrations/` in order (001 compatibility,
-002 per-customer-per-provider queue index). The migrations are safe to
-re-run. Skipping this step is what causes "We couldn't add you to this
-queue" when a customer joins a second queue — the database still has the
-old one-active-visit-per-customer index.
+This applies every file in `migrations/` in order (001–006; see the
+migration table above for what each does and where it is applied). The
+migrations are safe to re-run. Skipping this step is what causes "We
+couldn't add you to this queue" when a customer joins a second queue —
+the database still has the old one-active-visit-per-customer index.
 
-For a brand-new empty project, run the baseline schema from `README.md`
-first, then the command above; add `--import-json` only for a first-time
-import into empty tables.
+For a brand-new empty project there are two equivalent ways to create
+the whole schema: paste `docs/full-database-schema.sql` into the
+Supabase SQL Editor and run it once, **or** run the baseline (Part 1 of
+that same file) and then the command above. Add `--import-json` only
+for a first-time import into empty tables.
 
 ### 3. Collect the values (enter them only inside Render — never in git or chat)
 
