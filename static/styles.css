@@ -378,7 +378,8 @@ h1, h2, h3, p { margin-top: 0; }
 .report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .report-empty { color: var(--muted); font-size: 12px; }
 .admin-tabs { margin: 4px 0 18px; }
-[data-admin-panel][hidden] { display: none !important; }
+.dashboard-tabs { margin: 4px 0 18px; }
+[data-admin-panel][hidden], [data-provider-panel][hidden] { display: none !important; }
 .admin-report-heading { margin: 18px 0 6px; font-size: 13px; color: var(--ink); }
 .health-mix { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: #eceee9; margin-top: 4px; }
 .health-mix .seg-served { background: var(--green); }

@@ -2380,6 +2380,10 @@ class ApiTests(unittest.TestCase):
         dashboard = self.client.get("/?view=provider")
         self.assertIn(b'name="privateListing"', dashboard.data)
         self.assertIn(b"Your listing is private", dashboard.data)
+        for tab in (b"queue", b"walk-ins", b"reports", b"settings"):
+            self.assertIn(b'data-provider-tab="' + tab + b'"', dashboard.data)
+            self.assertIn(b'data-provider-panel="' + tab + b'"', dashboard.data)
+        self.assertIn(b'id="report-chart"', dashboard.data)
 
         listed = self.client.get("/api/providers")
         self.assertNotIn(provider_id, {str(item["id"]) for item in listed.json})

@@ -281,6 +281,7 @@
       providerPage.closest(".app-shell").classList.toggle("presentation-active", expanded);
       presentationButton.setAttribute("aria-expanded", String(expanded));
       presentationButton.textContent = expanded ? "Collapse display" : "Expand display";
+      if (expanded) providerPage.querySelector('[data-provider-tab="queue"]')?.click();
     });
 
     function appendText(parent, tag, className, text) {
@@ -608,6 +609,36 @@
         showError(error.message);
       }
     });
+    const providerTabs = [...providerPage.querySelectorAll("[data-provider-tab]")];
+    const providerPanels = [...providerPage.querySelectorAll("[data-provider-panel]")];
+    function selectProviderTab(name) {
+      providerTabs.forEach((tab) => {
+        const selected = tab.dataset.providerTab === name;
+        tab.classList.toggle("is-selected", selected);
+        tab.setAttribute("aria-selected", String(selected));
+      });
+      providerPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.providerPanel !== name;
+      });
+      try {
+        window.localStorage.setItem("smartqueue.providerTab", name);
+      } catch (error) {
+        // Storage unavailable; tabs still work for this visit.
+      }
+    }
+    if (providerTabs.length) {
+      providerTabs.forEach((tab) => {
+        tab.addEventListener("click", () => selectProviderTab(tab.dataset.providerTab));
+      });
+      let initialProviderTab = "queue";
+      try {
+        const saved = window.localStorage.getItem("smartqueue.providerTab");
+        if (providerTabs.some((tab) => tab.dataset.providerTab === saved)) initialProviderTab = saved;
+      } catch (error) {
+        // Storage unavailable; start on Queue.
+      }
+      selectProviderTab(initialProviderTab);
+    }
     let refreshReport = null;
     const reportsCard = document.querySelector("#reports-card");
     if (reportsCard) {
@@ -644,6 +675,26 @@
             appendText(box, "span", "", label);
             appendText(box, "strong", "", String(value));
             reportStats.append(box);
+          }
+          const reportChart = reportsCard.querySelector("#report-chart");
+          reportChart.replaceChildren();
+          if (report.services.length) {
+            const maxCount = Math.max(...report.services.map((service) => service.count));
+            const sortedServices = [...report.services].sort((a, b) => b.count - a.count);
+            for (const service of sortedServices) {
+              const barRow = document.createElement("div");
+              barRow.className = "health-bar-row";
+              appendText(barRow, "span", "health-bar-name", service.name);
+              const track = document.createElement("div");
+              track.className = "health-bar-track";
+              const fill = document.createElement("div");
+              fill.className = "health-bar-fill";
+              fill.style.width = maxCount ? `${Math.max(3, (service.count / maxCount) * 100)}%` : "0%";
+              track.append(fill);
+              barRow.append(track);
+              appendText(barRow, "span", "health-bar-value", service.avgMinutes === null ? `${service.count} done` : `${service.count} done · ${service.avgMinutes} min`);
+              reportChart.append(barRow);
+            }
           }
           reportServices.replaceChildren();
           if (!report.services.length) {

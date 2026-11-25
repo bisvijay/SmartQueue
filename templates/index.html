@@ -261,8 +261,14 @@
           {{ metric('Average service', provider.serviceDuration|default(15)|string + ' min', 'Your current estimate', '◴') }}
           {{ metric('Service status', provider.status, 'Customer visibility', '✓') }}
         </div>
+        <div class="queue-filters dashboard-tabs" role="tablist" aria-label="Dashboard sections">
+          <button class="queue-filter is-selected" type="button" role="tab" aria-selected="true" data-provider-tab="queue">Queue</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="walk-ins">Walk-ins</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="reports">Reports</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="settings">Settings</button>
+        </div>
         <div class="provider-dashboard-grid">
-          <section class="dashboard-card live-queue-card">
+          <section class="dashboard-card live-queue-card" data-provider-panel="queue">
             <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>People in queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span><button class="button button-outline" id="refresh-dashboard" type="button">Refresh</button></div>
             <div class="queue-filters" role="group" aria-label="Filter queue services">
               <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
@@ -306,7 +312,7 @@
             <p class="no-waiting" id="no-waiting" {% if provider_queue %}hidden{% endif %}>No one waiting. Enjoy the breather.</p>
             <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" type="button" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
           </section>
-          <section class="dashboard-card provider-qr-card">
+          <section class="dashboard-card provider-qr-card" data-provider-panel="walk-ins" hidden>
             <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
@@ -321,7 +327,7 @@
             <p>Your listing QR code will be available after approval.</p>
             {% endif %}
           </section>
-          <section class="dashboard-card provider-profile-card">
+          <section class="dashboard-card provider-profile-card" data-provider-panel="settings" hidden>
             <div class="dashboard-card-heading"><div><p class="eyebrow">YOUR PLACE</p><h2>Business settings</h2></div></div>
             <p class="provider-settings-intro">Update the details customers see on your listing. Queue counts, ratings, and reviews are managed by YouAreNext.</p>
             <form class="provider-photo-form" id="provider-photo-form">
@@ -368,7 +374,7 @@
             </form>
             <p class="inline-notice" id="provider-settings-notice" role="status" hidden></p>
           </section>
-          <section class="dashboard-card walk-in-card">
+          <section class="dashboard-card walk-in-card" data-provider-panel="walk-ins" hidden>
             <div class="dashboard-card-heading"><div><p class="eyebrow">IN PERSON</p><h2>Add walk-in</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <form class="provider-settings-form" id="walk-in-form">
@@ -393,7 +399,7 @@
             {% endif %}
           </section>
         </div>
-        <section class="dashboard-card reports-card" id="reports-card">
+        <section class="dashboard-card reports-card" id="reports-card" data-provider-panel="reports" hidden>
           <div class="dashboard-card-heading"><div><p class="eyebrow">REPORTS</p><h2>Services report</h2></div><span class="live-tag" id="report-label"></span></div>
           <div class="queue-filters" role="group" aria-label="Report period">
             <button class="queue-filter is-selected" type="button" data-report-period="day" aria-pressed="true">Today</button>
@@ -402,6 +408,7 @@
             <button class="queue-filter" type="button" data-report-period="all" aria-pressed="false">All time</button>
           </div>
           <div class="report-stats" id="report-stats"></div>
+          <div class="health-bars" id="report-chart"></div>
           <div class="report-services" id="report-services"></div>
         </section>
         <div class="dashboard-disclaimer">Queue and business settings are saved to your YouAreNext account.</div>
