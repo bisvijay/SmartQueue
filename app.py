@@ -161,6 +161,45 @@ def create_app(test_config=None):
         # keeps a working dashboard, QR code, and walk-in queue.
         return bool(provider.get("privateListing"))
 
+    def all_customer_reviews():
+        # Until migration 006 is applied the Postgres table may not exist;
+        # treat that as "no reviews yet" instead of breaking pages.
+        try:
+            return store.list("customer_reviews")
+        except Exception:
+            log.warning("customer_reviews unavailable; returning none")
+            return []
+
+    def customer_reviews_for(provider_id):
+        return [
+            review
+            for review in all_customer_reviews()
+            if str(review.get("providerId")) == str(provider_id)
+        ]
+
+    def refresh_provider_rating(provider):
+        # The listing's rating and review count always reflect the real
+        # customer reviews on file; with none, the listing shows as New.
+        reviews = customer_reviews_for(provider["id"])
+        if reviews:
+            provider["reviews"] = len(reviews)
+            provider["rating"] = round(
+                sum(int(review["rating"]) for review in reviews) / len(reviews), 1
+            )
+        else:
+            provider["reviews"] = 0
+            provider["rating"] = "New"
+
+    def public_customer_review(review):
+        return {
+            "id": review["id"],
+            "providerId": str(review["providerId"]),
+            "customerName": review.get("customerName") or "Customer",
+            "rating": int(review["rating"]),
+            "comment": review.get("comment") or "",
+            "createdAt": review.get("createdAt"),
+        }
+
     def require_owned_provider(provider_id):
         user = require_user("provider")
         provider = require_provider(provider_id)
@@ -1341,6 +1380,7 @@ def create_app(test_config=None):
             if opening and closing:
                 listed["hours"] = f"{format_hhmm(opening)} – {format_hhmm(closing)}"
         my_queues = []
+        reviewable_visits = []
         user = current_user()
         if user and user.get("role") == "customer":
             providers_by_id = {str(provider["id"]): provider for provider in all_providers}
@@ -1364,6 +1404,29 @@ def create_app(test_config=None):
                     ) if entry.get("status") == "waiting" else None,
                 })
             my_queues.sort(key=lambda item: item["queue"].get("createdAt", ""))
+            reviews_by_visit = {
+                str(review.get("visitId")): review
+                for review in all_customer_reviews()
+                if str(review.get("customerId")) == str(user["id"])
+            }
+            completed = [
+                entry
+                for entry in store.list("queues")
+                if entry.get("customerId") == user["id"] and entry.get("status") == "completed"
+            ]
+            completed.sort(
+                key=lambda entry: entry.get("completedAt") or entry.get("createdAt", ""),
+                reverse=True,
+            )
+            for entry in completed[:5]:
+                provider_for_queue = providers_by_id.get(str(entry["providerId"]))
+                if not provider_for_queue:
+                    continue
+                reviewable_visits.append({
+                    "queue": entry,
+                    "provider": provider_for_queue,
+                    "review": reviews_by_visit.get(str(entry["id"])),
+                })
         joined_ids = {str(item["queue"]["providerId"]) for item in my_queues}
         view = request.args.get("view", "customer")
         if view not in {"customer", "provider", "admin"}:
@@ -1401,6 +1464,7 @@ def create_app(test_config=None):
             "index.html",
             providers=providers,
             my_queues=my_queues,
+            reviewable_visits=reviewable_visits,
             joined_ids=joined_ids,
             view=view,
             provider=provider,
@@ -2048,6 +2112,77 @@ def create_app(test_config=None):
                 ).isoformat() if queue.get("status") == "waiting" else None,
             })
         return jsonify(queues=enriched)
+
+    @app.get("/api/providers/<provider_id>/reviews")
+    def list_customer_reviews(provider_id):
+        provider = store.get("providers", provider_id)
+        if provider is None:
+            raise ApiError(404, "Provider not found.")
+        reviews = sorted(
+            customer_reviews_for(provider["id"]),
+            key=lambda review: review.get("createdAt", ""),
+            reverse=True,
+        )
+        return jsonify(
+            reviews=[public_customer_review(review) for review in reviews[:20]],
+            rating=provider.get("rating", "New"),
+            total=len(reviews),
+        )
+
+    @app.post("/api/providers/<provider_id>/reviews")
+    def create_customer_review(provider_id):
+        user = require_user("customer")
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ApiError(400, "Request body must be a JSON object.")
+        provider = store.get("providers", provider_id)
+        if provider is None:
+            raise ApiError(404, "Provider not found.")
+        rating = body.get("rating")
+        if isinstance(rating, bool) or not isinstance(rating, int) or not 1 <= rating <= 5:
+            raise ApiError(400, "Rating must be a whole number of stars from 1 to 5.")
+        comment = body.get("comment") or ""
+        if not isinstance(comment, str) or len(comment.strip()) > 500:
+            raise ApiError(400, "Comment must be 500 characters or fewer.")
+        visit_id = body.get("visitId")
+        visit = store.get("queues", str(visit_id)) if visit_id else None
+        if visit is None:
+            raise ApiError(404, "Visit not found.")
+        if visit.get("customerId") != user["id"]:
+            raise ApiError(403, "You can only review your own visits.")
+        if str(visit.get("providerId")) != str(provider["id"]):
+            raise ApiError(400, "That visit belongs to a different provider.")
+        if visit.get("status") != "completed":
+            raise ApiError(409, "Only completed visits can be reviewed.")
+        if any(
+            str(review.get("visitId")) == str(visit["id"])
+            for review in all_customer_reviews()
+        ):
+            raise ApiError(409, "You have already reviewed this visit.")
+        review = {
+            "id": str(uuid.uuid4()),
+            "providerId": str(provider["id"]),
+            "visitId": str(visit["id"]),
+            "customerId": user["id"],
+            "customerName": user.get("name") or "Customer",
+            "rating": rating,
+            "comment": comment.strip(),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        with store.transaction():
+            store.create("customer_reviews", review["id"], review, review)
+            fresh = require_provider(str(provider["id"]))
+            refresh_provider_rating(fresh)
+            store.put("providers", str(fresh["id"]), fresh, fresh)
+        log.info(
+            "review.create provider=%s visit=%s rating=%s",
+            provider["id"], visit["id"], rating,
+        )
+        return jsonify(
+            review=public_customer_review(review),
+            rating=fresh["rating"],
+            reviews=fresh["reviews"],
+        ), 201
 
     @app.post("/api/queues")
     def join_queue():

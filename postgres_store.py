@@ -22,6 +22,7 @@ TABLES = {
     "advertisements": "advertisements",
     "ad_media": "ad_media",
     "ad_events": "ad_events",
+    "customer_reviews": "customer_reviews",
 }
 
 
@@ -370,6 +371,17 @@ class PostgresStore:
         })
         return record
 
+    @staticmethod
+    def _customer_review_record(row):
+        record = dict(row["app_data"] or {})
+        record.update({
+            "id": str(row["id"]),
+            "providerId": str(row["provider_id"]),
+            "rating": row["rating"],
+            "createdAt": row["created_at"].isoformat(),
+        })
+        return record
+
     def _get(self, connection, collection, record_id):
         if collection == "users":
             row = connection.execute("SELECT * FROM accounts WHERE id = %s", (_uuid(record_id),)).fetchone()
@@ -404,6 +416,9 @@ class PostgresStore:
         if collection == "ad_events":
             row = connection.execute("SELECT * FROM ad_events WHERE id = %s", (_uuid(record_id),)).fetchone()
             return self._ad_event_record(row) if row else None
+        if collection == "customer_reviews":
+            row = connection.execute("SELECT * FROM customer_reviews WHERE id = %s", (_uuid(record_id),)).fetchone()
+            return self._customer_review_record(row) if row else None
         raise ValueError(f"Unknown collection: {collection}")
 
     def get(self, collection, record_id):
@@ -448,6 +463,9 @@ class PostgresStore:
             if collection == "ad_events":
                 rows = connection.execute("SELECT * FROM ad_events ORDER BY created_at, id").fetchall()
                 return [self._ad_event_record(row) for row in rows]
+            if collection == "customer_reviews":
+                rows = connection.execute("SELECT * FROM customer_reviews ORDER BY created_at, id").fetchall()
+                return [self._customer_review_record(row) for row in rows]
             rows = connection.execute("SELECT * FROM provider_reviews ORDER BY created_at, id").fetchall()
             return [
                 {**dict(row["app_data"] or {}), "id": str(row["id"]), "providerId": str(row["provider_id"]),
@@ -673,6 +691,24 @@ class PostgresStore:
         """, values)
         return True
 
+    def _write_customer_review(self, connection, record, create=False):
+        extra = self._extra(record, {"id", "providerId", "rating", "createdAt"})
+        values = (
+            _uuid(record["id"]), _uuid(record["providerId"]), int(record["rating"]),
+            _timestamp(record.get("createdAt")), json.dumps(extra),
+        )
+        command = """
+            INSERT INTO customer_reviews (id, provider_id, rating, created_at, app_data)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+        """
+        if create:
+            return connection.execute(command + " ON CONFLICT DO NOTHING RETURNING id", values).fetchone() is not None
+        connection.execute(command + """
+            ON CONFLICT (id) DO UPDATE SET provider_id=EXCLUDED.provider_id,
+            rating=EXCLUDED.rating, created_at=EXCLUDED.created_at, app_data=EXCLUDED.app_data
+        """, values)
+        return True
+
     def put(self, collection, record_id, data, index_entry=None):
         record = dict(data)
         record["id"] = str(record_id)
@@ -685,6 +721,7 @@ class PostgresStore:
             "advertisements": self._write_ad,
             "ad_media": self._write_ad_media,
             "ad_events": self._write_ad_event,
+            "customer_reviews": self._write_customer_review,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")
@@ -703,6 +740,7 @@ class PostgresStore:
             "advertisements": self._write_ad,
             "ad_media": self._write_ad_media,
             "ad_events": self._write_ad_event,
+            "customer_reviews": self._write_customer_review,
         }.get(collection)
         if not writer:
             raise ValueError(f"Unknown collection: {collection}")

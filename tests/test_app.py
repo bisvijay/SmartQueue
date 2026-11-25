@@ -2188,6 +2188,83 @@ class ApiTests(unittest.TestCase):
         migration = Path("migrations/003_multi_staff_serving.sql").read_text()
         self.assertIn("DROP INDEX IF EXISTS queue_one_serving_visit_per_provider", migration)
 
+    def test_customer_review_updates_provider_rating(self):
+        provider_user = self.create_account("provider", "review-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.client.post("/logout")
+        self.fresh_csrf()
+        self.create_account("customer", "review-customer@example.com")
+        self.relogin("review-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+        visit_id = joined.json["queue"]["id"]
+
+        # A waiting visit cannot be reviewed yet.
+        early = self.client.post(
+            f"/api/providers/{provider_id}/reviews", json={"visitId": visit_id, "rating": 5}
+        )
+        self.assertEqual(early.status_code, 409)
+        self.client.post("/logout")
+
+        # The provider serves and completes the visit.
+        self.relogin("review-owner@example.com")
+        served = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{visit_id}", json={"action": "serve"}
+        )
+        self.assertEqual(served.status_code, 200, served.get_data(as_text=True))
+        completed = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{visit_id}", json={"action": "complete"}
+        )
+        self.assertEqual(completed.status_code, 200, completed.get_data(as_text=True))
+        self.client.post("/logout")
+
+        # Another customer cannot review this visit.
+        self.fresh_csrf()
+        self.create_account("customer", "review-other@example.com")
+        self.relogin("review-other@example.com")
+        forbidden = self.client.post(
+            f"/api/providers/{provider_id}/reviews", json={"visitId": visit_id, "rating": 1}
+        )
+        self.assertEqual(forbidden.status_code, 403)
+        self.client.post("/logout")
+
+        # The visit's own customer reviews it; the listing rating updates.
+        self.relogin("review-customer@example.com")
+        created = self.client.post(
+            f"/api/providers/{provider_id}/reviews",
+            json={"visitId": visit_id, "rating": 5, "comment": "Great cut"},
+        )
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        self.assertEqual(created.json["rating"], 5.0)
+        self.assertEqual(created.json["reviews"], 1)
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["rating"], 5.0)
+        self.assertEqual(provider["reviews"], 1)
+
+        # One review per visit, and ratings must be 1-5.
+        duplicate = self.client.post(
+            f"/api/providers/{provider_id}/reviews", json={"visitId": visit_id, "rating": 4}
+        )
+        self.assertEqual(duplicate.status_code, 409)
+        bad = self.client.post(
+            f"/api/providers/{provider_id}/reviews", json={"visitId": visit_id, "rating": 9}
+        )
+        self.assertEqual(bad.status_code, 400)
+
+        # The public list shows the review, and the home page shows the
+        # visit as already rated.
+        listed = self.client.get(f"/api/providers/{provider_id}/reviews")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json["total"], 1)
+        self.assertEqual(listed.json["reviews"][0]["comment"], "Great cut")
+        self.assertEqual(listed.json["reviews"][0]["rating"], 5)
+        home = self.client.get("/")
+        self.assertIn(b"You rated this visit", home.data)
+
+        # Migration 006 creates the backing table.
+        migration = Path("migrations/006_customer_reviews.sql").read_text()
+        self.assertIn("customer_reviews", migration)
+
     def test_provider_reports_periods_and_services(self):
         provider_user = self.create_account("provider", "reports-owner@example.com")
         provider_id = str(provider_user["providerId"])

@@ -225,6 +225,50 @@
     myQueueRefresh.addEventListener("click", () => window.location.reload());
   }
 
+  document.querySelectorAll("[data-review-form]").forEach((form) => {
+    const panel = form.closest("[data-review-panel]");
+    const stars = [...form.querySelectorAll("[data-star]")];
+    const notice = form.querySelector("[data-review-notice]");
+    let rating = 0;
+    const paintStars = () => {
+      stars.forEach((star, index) => {
+        star.textContent = index < rating ? "★" : "☆";
+        star.classList.toggle("is-on", index < rating);
+      });
+    };
+    stars.forEach((star) => {
+      star.addEventListener("click", () => {
+        rating = Number(star.dataset.star);
+        paintStars();
+      });
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!rating) {
+        notice.hidden = false;
+        notice.textContent = "Please pick a star rating first.";
+        return;
+      }
+      try {
+        await api(`/api/providers/${encodeURIComponent(panel.dataset.providerId)}/reviews`, {
+          method: "POST",
+          body: JSON.stringify({
+            visitId: panel.dataset.visitId,
+            rating,
+            comment: form.querySelector(".review-comment").value.trim(),
+          }),
+        });
+        const thanks = document.createElement("p");
+        thanks.className = "review-done";
+        thanks.textContent = `Thanks for your review! ${"★".repeat(rating)}${"☆".repeat(5 - rating)}`;
+        form.replaceWith(thanks);
+      } catch (error) {
+        notice.hidden = false;
+        notice.textContent = error.message;
+      }
+    });
+  });
+
   const queuePanels = [...document.querySelectorAll("[data-queue-panel]")];
     if (queuePanels.length) {
       const refreshQueues = async () => {
@@ -724,6 +768,51 @@
       });
       loadReport("day");
       refreshReport = () => loadReport(activeReportPeriod);
+    }
+
+    const providerReviewsList = document.querySelector("#provider-reviews-list");
+    if (providerReviewsList) {
+      const loadProviderReviews = async () => {
+        try {
+          const data = await api(`/api/providers/${encodeURIComponent(providerId)}/reviews`);
+          const summary = document.querySelector("#provider-reviews-summary");
+          if (summary) {
+            summary.textContent = data.total ? `★ ${data.rating} (${data.total})` : "";
+          }
+          providerReviewsList.replaceChildren();
+          if (!data.reviews.length) {
+            const empty = document.createElement("p");
+            empty.textContent = "No reviews yet. Customers can rate a visit once it is completed.";
+            providerReviewsList.append(empty);
+            return;
+          }
+          for (const review of data.reviews) {
+            const row = document.createElement("div");
+            row.className = "provider-review-row";
+            const head = document.createElement("p");
+            head.className = "provider-review-head";
+            const stars = document.createElement("span");
+            stars.className = "review-stars";
+            stars.textContent = `${"★".repeat(review.rating)}${"☆".repeat(5 - review.rating)}`;
+            head.append(stars);
+            appendText(head, "strong", "", ` ${review.customerName}`);
+            const when = document.createElement("span");
+            when.className = "provider-review-date";
+            when.textContent = review.createdAt
+              ? ` · ${new Date(review.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`
+              : "";
+            head.append(when);
+            row.append(head);
+            if (review.comment) {
+              appendText(row, "p", "provider-review-comment", review.comment);
+            }
+            providerReviewsList.append(row);
+          }
+        } catch (error) {
+          showError(error.message);
+        }
+      };
+      loadProviderReviews();
     }
 
     const refreshDashboardButton = document.querySelector("#refresh-dashboard");

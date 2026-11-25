@@ -139,6 +139,32 @@
           </div>
           {% endif %}
 
+          {% if reviewable_visits %}
+          <div id="visit-reviews">
+          {% for item in reviewable_visits %}
+          <section class="my-queue panel review-panel" data-review-panel data-visit-id="{{ item.queue.id }}" data-provider-id="{{ item.provider.id }}">
+            <div class="queue-panel-left">
+              <div class="queue-panel-icon" aria-hidden="true">★</div>
+              <div><p class="eyebrow">VISIT COMPLETED</p><h2 data-i18n-name>{{ item.provider.name }}</h2>
+              {% if item.review %}
+              <p class="review-done">You rated this visit <span class="review-stars">{{ "★" * item.review.rating }}{{ "☆" * (5 - item.review.rating) }}</span></p>
+              {% else %}
+              <form class="review-form" data-review-form>
+                <div class="review-stars-input" role="radiogroup" aria-label="Your rating">
+                  {% for star in [1, 2, 3, 4, 5] %}<button type="button" class="review-star" data-star="{{ star }}" aria-label="{{ star }} stars">☆</button>{% endfor %}
+                </div>
+                <input class="review-comment" type="text" maxlength="500" placeholder="Write a comment (optional)" />
+                <button class="button button-dark" type="submit">Submit review</button>
+                <p class="inline-notice" data-review-notice hidden></p>
+              </form>
+              {% endif %}
+              </div>
+            </div>
+          </section>
+          {% endfor %}
+          </div>
+          {% endif %}
+
           <div class="results-heading">
             <div><h2>On your radar <span id="result-count">{{ providers|length }}</span></h2><p>Good places, with a little less guesswork.</p></div>
             <button class="sort-button" id="all-nearby">All nearby <span aria-hidden="true">⌄</span></button>
@@ -410,6 +436,10 @@
           <div class="report-stats" id="report-stats"></div>
           <div class="health-bars" id="report-chart"></div>
           <div class="report-services" id="report-services"></div>
+        </section>
+        <section class="dashboard-card reviews-card" data-provider-panel="reports" hidden>
+          <div class="dashboard-card-heading"><div><p class="eyebrow">FEEDBACK</p><h2>Customer reviews</h2></div><span class="live-tag" id="provider-reviews-summary"></span></div>
+          <div class="provider-reviews-list" id="provider-reviews-list"></div>
         </section>
         </div>
       </main>
