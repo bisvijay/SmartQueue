@@ -272,12 +272,14 @@ h1, h2, h3, p { margin-top: 0; }
 .presentation-expanded .provider-dashboard-content > * { display: none; }
 .presentation-expanded .dashboard-top .dashboard-presentation-controls { display: flex; }
 .presentation-expanded .provider-dashboard-content { display: block; height: calc(100vh - 138px); min-height: 340px; }
-.presentation-expanded .provider-dashboard-grid { display: grid; height: 100%; grid-template-columns: minmax(0, 1fr) minmax(230px, 310px); grid-template-areas: "queue qr"; gap: 12px; }
-.presentation-expanded .provider-dashboard-grid > :not(.live-queue-card, .provider-qr-card) { display: none; }
+.presentation-expanded .provider-dashboard-grid { display: grid; height: 100%; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "queue qr" "queue walkin"; gap: 12px; }
+.presentation-expanded .provider-dashboard-grid > :not(.live-queue-card, .provider-qr-card, .walk-in-card) { display: none; }
 .presentation-expanded .live-queue-card,
-.presentation-expanded .provider-qr-card { display: flex; min-height: 0; }
+.presentation-expanded .provider-qr-card,
+.presentation-expanded .walk-in-card { display: flex; min-height: 0; }
 .presentation-expanded .live-queue-card { grid-area: queue; flex-direction: column; }
 .presentation-expanded .provider-qr-card { grid-area: qr; justify-content: center; }
+.presentation-expanded .walk-in-card { grid-area: walkin; flex-direction: column; overflow-y: auto; }
 .presentation-expanded .live-queue-card #queue-rows { min-height: 0; overflow-y: auto; }
 .presentation-expanded .dashboard-disclaimer { display: none; }
 .dashboard-card { padding: 21px; border: 1px solid #e8ebe5; border-radius: 7px; background: white; }
