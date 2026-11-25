@@ -2254,6 +2254,106 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(own.json["report"]["served"], 0)
         self.assertEqual(own.json["report"]["services"], [])
 
+    def test_admin_reports_require_admin(self):
+        denied = self.client.get("/api/admin/reports?period=day")
+        self.assertEqual(denied.status_code, 403)
+        self.create_account("provider", "admin-reports-gate@example.com")
+        self.relogin("admin-reports-gate@example.com")
+        denied = self.client.get("/api/admin/reports?period=day")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_admin_reports_aggregate_by_category_and_provider(self):
+        salon_user = self.create_account("provider", "admin-reports-salon@example.com")
+        salon_id = str(salon_user["providerId"])
+        clinic_user = self.create_account("provider", "admin-reports-clinic@example.com")
+        clinic_id = str(clinic_user["providerId"])
+        clinic = self.store.get("providers", clinic_id)
+        clinic["category"] = "Healthcare"
+        self.store.put("providers", clinic_id, clinic, clinic)
+
+        self.fresh_csrf()
+        self.create_account("customer", "admin-reports-customer-a@example.com")
+        self.relogin("admin-reports-customer-a@example.com")
+        salon_served = self.client.post(
+            "/api/queues", json={"providerId": salon_id, "services": ["Cut"]}
+        ).json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.fresh_csrf()
+        self.create_account("customer", "admin-reports-customer-b@example.com")
+        self.relogin("admin-reports-customer-b@example.com")
+        salon_removed = self.client.post(
+            "/api/queues", json={"providerId": salon_id, "services": ["Color"]}
+        ).json["queue"]["id"]
+        clinic_served = self.client.post(
+            "/api/queues", json={"providerId": clinic_id, "services": ["Cut"]}
+        ).json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.relogin("admin-reports-salon@example.com")
+        for action in ("serve", "complete"):
+            self.assertEqual(
+                self.client.patch(
+                    f"/api/providers/{salon_id}/queues/{salon_served}", json={"action": action}
+                ).status_code,
+                200,
+            )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{salon_id}/queues/{salon_removed}",
+                json={"action": "remove", "reason": "no_show"},
+            ).status_code,
+            200,
+        )
+        self.client.post("/logout")
+
+        self.relogin("admin-reports-clinic@example.com")
+        for action in ("serve", "complete"):
+            self.assertEqual(
+                self.client.patch(
+                    f"/api/providers/{clinic_id}/queues/{clinic_served}", json={"action": action}
+                ).status_code,
+                200,
+            )
+        self.client.post("/logout")
+
+        self.fresh_csrf()
+        self.login_admin()
+        for period in ("day", "week", "month", "all"):
+            response = self.client.get(f"/api/admin/reports?period={period}")
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            report = response.json["report"]
+            self.assertEqual(report["period"], period)
+            self.assertEqual(report["totals"]["served"], 2)
+            self.assertEqual(report["totals"]["joined"], 3)
+            self.assertEqual(report["totals"]["noShows"], 1)
+            self.assertEqual(report["totals"]["removed"], 0)
+            categories = {row["category"]: row for row in report["byCategory"]}
+            # The four seed listings add one idle provider to Salon,
+            # Healthcare, Food & drink, and Government.
+            self.assertTrue({"Salon", "Healthcare"} <= set(categories))
+            self.assertEqual(categories["Salon"]["providers"], 2)
+            self.assertEqual(categories["Salon"]["served"], 1)
+            self.assertEqual(categories["Salon"]["joined"], 2)
+            self.assertEqual(categories["Salon"]["noShows"], 1)
+            self.assertEqual(categories["Healthcare"]["providers"], 2)
+            self.assertEqual(categories["Healthcare"]["served"], 1)
+            self.assertEqual(categories["Healthcare"]["joined"], 1)
+            if "Food & drink" in categories:
+                self.assertEqual(categories["Food & drink"]["served"], 0)
+            providers = {row["providerId"]: row for row in report["byProvider"]}
+            self.assertTrue({salon_id, clinic_id} <= set(providers))
+            self.assertEqual(providers[salon_id]["category"], "Salon")
+            self.assertEqual(providers[salon_id]["served"], 1)
+            self.assertEqual(providers[clinic_id]["category"], "Healthcare")
+            self.assertEqual(providers[clinic_id]["served"], 1)
+        bad = self.client.get("/api/admin/reports?period=year")
+        self.assertEqual(bad.status_code, 400)
+        page = self.client.get("/?view=admin")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"data-admin-reports", page.data)
+        self.assertIn(b"Activity reports", page.data)
+
     def test_dashboard_walk_in_accepts_multiple_services(self):
         provider_user = self.create_account("provider", "walkin-owner@example.com")
         provider_id = str(provider_user["providerId"])

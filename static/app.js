@@ -693,6 +693,89 @@
 
   const adminDashboard = document.querySelector("[data-admin-dashboard]");
   if (adminDashboard) {
+    const adminReports = adminDashboard.querySelector("[data-admin-reports]");
+    if (adminReports) {
+      const adminReportStats = adminReports.querySelector("#admin-report-stats");
+      const adminReportLabel = adminReports.querySelector("#admin-report-label");
+      const adminReportCategories = adminReports.querySelector("#admin-report-categories");
+      const adminReportProviders = adminReports.querySelector("#admin-report-providers");
+      const adminReportEmpty = adminReports.querySelector("#admin-report-empty");
+      const adminReportButtons = [...adminReports.querySelectorAll("[data-admin-report-period]")];
+      function adminReportRow(cells, markFirstAsName) {
+        const row = document.createElement("tr");
+        cells.forEach((cell, index) => {
+          const td = document.createElement("td");
+          if (markFirstAsName && index === 0) td.setAttribute("data-i18n-name", "");
+          td.textContent = cell;
+          row.append(td);
+        });
+        return row;
+      }
+      async function loadAdminReport(period) {
+        adminReportButtons.forEach((button) => {
+          const selected = button.dataset.adminReportPeriod === period;
+          button.classList.toggle("is-selected", selected);
+          button.setAttribute("aria-pressed", String(selected));
+        });
+        try {
+          const response = await api(`/api/admin/reports?period=${period}`);
+          const report = response.report;
+          adminReportLabel.textContent = report.label;
+          adminReportStats.replaceChildren();
+          const totals = report.totals;
+          const stats = [
+            ["Customers served", totals.served],
+            ["Joined the queue", totals.joined],
+            ["No-shows", totals.noShows],
+            ["Removed", totals.removed],
+            ["Cleared at day end", totals.clearedDayEnd],
+            ["Average wait", `${totals.avgWaitMinutes} min`],
+            ["Average service", `${totals.avgServiceMinutes} min`],
+            ["Total service time", `${totals.totalServiceMinutes} min`],
+          ];
+          for (const [label, value] of stats) {
+            const box = document.createElement("div");
+            box.className = "report-stat";
+            appendText(box, "span", "", label);
+            appendText(box, "strong", "", String(value));
+            adminReportStats.append(box);
+          }
+          adminReportCategories.replaceChildren();
+          for (const row of report.byCategory) {
+            adminReportCategories.append(adminReportRow([
+              row.category,
+              String(row.providers),
+              String(row.served),
+              String(row.joined),
+              String(row.noShows),
+              String(row.removed),
+              `${row.avgWaitMinutes} min`,
+              `${row.avgServiceMinutes} min`,
+            ], false));
+          }
+          adminReportProviders.replaceChildren();
+          for (const row of report.byProvider) {
+            adminReportProviders.append(adminReportRow([
+              row.name,
+              row.category,
+              String(row.served),
+              String(row.joined),
+              String(row.noShows),
+              String(row.removed),
+              `${row.avgWaitMinutes} min`,
+              `${row.avgServiceMinutes} min`,
+            ], true));
+          }
+          adminReportEmpty.hidden = report.byProvider.length !== 0;
+        } catch (error) {
+          showError(error.message);
+        }
+      }
+      adminReportButtons.forEach((button) => {
+        button.addEventListener("click", () => loadAdminReport(button.dataset.adminReportPeriod));
+      });
+      loadAdminReport("day");
+    }
     adminDashboard.addEventListener("click", async (event) => {
       const approvalButton = event.target.closest(".admin-approval-action");
       if (approvalButton) {

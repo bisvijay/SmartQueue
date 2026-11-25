@@ -1800,12 +1800,7 @@ def create_app(test_config=None):
             raise ApiError(400, "Choose active, completed, or dequeued services.")
         return jsonify(queues=provider_queue_view(provider, entries))
 
-    @app.get("/api/providers/<provider_id>/reports")
-    def provider_reports(provider_id):
-        _, provider = require_owned_provider(provider_id)
-        period = request.args.get("period", "day")
-        if period not in {"day", "week", "month", "all"}:
-            raise ApiError(400, "Choose a day, week, month, or all report.")
+    def provider_report_data(provider, period, entries):
         local_now = provider_local_now(provider)
         if period == "day":
             start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1845,10 +1840,6 @@ def create_app(test_config=None):
                 return False
             return True
 
-        entries = [
-            entry for entry in store.list("queues")
-            if str(entry.get("providerId")) == str(provider_id)
-        ]
         completed = [
             entry for entry in entries
             if entry.get("status") == "completed" and in_window(entry.get("completedAt"))
@@ -1899,7 +1890,7 @@ def create_app(test_config=None):
             }
             for name, count in sorted(service_counts.items(), key=lambda item: (-item[1], item[0]))
         ]
-        return jsonify(report={
+        return {
             "period": period,
             "label": label,
             "served": len(completed),
@@ -1911,6 +1902,96 @@ def create_app(test_config=None):
             "avgServiceMinutes": round(sum(durations) / len(durations)) if durations else 0,
             "totalServiceMinutes": round(sum(durations)),
             "services": services,
+            "_waitTotal": sum(waits),
+            "_waitCount": len(waits),
+            "_serviceTotal": sum(durations),
+            "_serviceCount": len(durations),
+        }
+
+    REPORT_METRIC_KEYS = (
+        "served", "joined", "noShows", "removed", "clearedDayEnd",
+        "avgWaitMinutes", "avgServiceMinutes", "totalServiceMinutes",
+    )
+
+    def combined_report_metrics(data_rows):
+        wait_total = sum(row["_waitTotal"] for row in data_rows)
+        wait_count = sum(row["_waitCount"] for row in data_rows)
+        service_total = sum(row["_serviceTotal"] for row in data_rows)
+        service_count = sum(row["_serviceCount"] for row in data_rows)
+        return {
+            "served": sum(row["served"] for row in data_rows),
+            "joined": sum(row["joined"] for row in data_rows),
+            "noShows": sum(row["noShows"] for row in data_rows),
+            "removed": sum(row["removed"] for row in data_rows),
+            "clearedDayEnd": sum(row["clearedDayEnd"] for row in data_rows),
+            "avgWaitMinutes": round(wait_total / wait_count) if wait_count else 0,
+            "avgServiceMinutes": round(service_total / service_count) if service_count else 0,
+            "totalServiceMinutes": round(service_total),
+        }
+
+    @app.get("/api/providers/<provider_id>/reports")
+    def provider_reports(provider_id):
+        _, provider = require_owned_provider(provider_id)
+        period = request.args.get("period", "day")
+        if period not in {"day", "week", "month", "all"}:
+            raise ApiError(400, "Choose a day, week, month, or all report.")
+        entries = [
+            entry for entry in store.list("queues")
+            if str(entry.get("providerId")) == str(provider_id)
+        ]
+        data = provider_report_data(provider, period, entries)
+        return jsonify(report={key: value for key, value in data.items() if not key.startswith("_")})
+
+    @app.get("/api/admin/reports")
+    def admin_reports():
+        require_admin()
+        period = request.args.get("period", "day")
+        if period not in {"day", "week", "month", "all"}:
+            raise ApiError(400, "Choose a day, week, month, or all report.")
+        providers = store.list("providers")
+        entries_by_provider = {}
+        for entry in store.list("queues"):
+            entries_by_provider.setdefault(str(entry.get("providerId")), []).append(entry)
+        # Each provider is counted in its own timezone, matching its own
+        # dashboard report; the shared label uses the default timezone.
+        label = provider_report_data({"timezone": DEFAULT_PROVIDER_TIMEZONE}, period, [])["label"]
+        data_by_provider = [
+            (
+                provider,
+                provider_report_data(
+                    provider, period, entries_by_provider.get(str(provider["id"]), [])
+                ),
+            )
+            for provider in providers
+        ]
+        by_category = []
+        for category in PROVIDER_CATEGORIES:
+            rows = [data for provider, data in data_by_provider if provider.get("category") == category]
+            if not rows:
+                continue
+            by_category.append({
+                "category": category,
+                "providers": len(rows),
+                **combined_report_metrics(rows),
+            })
+        by_category.sort(key=lambda row: (-row["served"], row["category"]))
+        by_provider = [
+            {
+                "providerId": str(provider["id"]),
+                "name": provider.get("name", ""),
+                "category": provider.get("category", ""),
+                "approvalStatus": provider_approval_status(provider),
+                **{key: data[key] for key in REPORT_METRIC_KEYS},
+            }
+            for provider, data in data_by_provider
+        ]
+        by_provider.sort(key=lambda row: (-row["served"], row["name"].lower()))
+        return jsonify(report={
+            "period": period,
+            "label": label,
+            "totals": combined_report_metrics([data for _, data in data_by_provider]),
+            "byCategory": by_category,
+            "byProvider": by_provider,
         })
 
     @app.get("/api/queues/current")

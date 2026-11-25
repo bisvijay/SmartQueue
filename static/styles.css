@@ -377,6 +377,9 @@ h1, h2, h3, p { margin-top: 0; }
 .report-service-row span:nth-child(2), .report-service-row span:nth-child(3) { min-width: 74px; text-align: right; }
 .report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .report-empty { color: var(--muted); font-size: 12px; }
+.admin-report-heading { margin: 18px 0 6px; font-size: 13px; color: var(--ink); }
+.admin-report-table-wrap { overflow-x: auto; }
+.report-table td:first-child { font-weight: 600; color: var(--ink); }
 .my-queue-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .dashboard-footer-links { margin-top: 10px; font-size: 11px; }
 .dashboard-footer-links a { color: var(--muted); }
