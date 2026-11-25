@@ -455,7 +455,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"Add walk-in", provider.data)
         self.assertIn(b'id="toggle-presentation"', provider.data)
         self.assertIn(b"Expand display", provider.data)
-        self.assertIn(b"Join your queue", provider.data)
+        self.assertIn(b"Join the queue", provider.data)
+        self.assertNotIn(b"dashboard-disclaimer", provider.data)
+        self.assertNotIn(b"dashboard-footer-links", provider.data)
         self.assertEqual(admin.status_code, 302)
         self.login_admin()
         admin = self.client.get("/?view=admin")
@@ -2432,9 +2434,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'type="checkbox" name="services"', page.data)
         self.assertIn(b"data-i18n-name>Jamie&#39;s Service", page.data)
         self.assertIn(b"provider-qr-name", page.data)
-        # The Admin link lives at the bottom, not in the header.
+        # No Admin link on the provider page: not in the header, and the
+        # dashboard footer link was removed at the user's request.
         self.assertNotIn(b"nav-link admin-link", page.data)
-        self.assertIn(b"dashboard-footer-links", page.data)
+        self.assertNotIn(b"dashboard-footer-links", page.data)
         landing = self.client.get("/")
         self.assertNotIn(b"nav-link admin-link", landing.data)
         self.assertIn(b">Admin</a>", landing.data)

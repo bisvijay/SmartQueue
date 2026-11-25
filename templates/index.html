@@ -312,9 +312,9 @@
             <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" type="button" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
           </section>
           <section class="dashboard-card provider-qr-card" data-provider-panel="queue">
-            <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <div class="ad-slot ad-slot-dashboard" data-ad-placement="dashboard" data-ad-provider="{{ provider.id }}" data-ad-category="{{ provider.category }}" hidden></div>
+            <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join the queue</h2></div></div>
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
             <p class="provider-qr-name" data-i18n-name>{{ provider.name }}</p>
             {% if provider.privateListing %}
@@ -323,6 +323,7 @@
             <p>Scan to find this listing and join the queue.</p>
             {% endif %}
             {% else %}
+            <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join the queue</h2></div></div>
             <p>Your listing QR code will be available after approval.</p>
             {% endif %}
           </section>
@@ -410,8 +411,6 @@
           <div class="health-bars" id="report-chart"></div>
           <div class="report-services" id="report-services"></div>
         </section>
-        <div class="dashboard-disclaimer">Queue and business settings are saved to your YouAreNext account.</div>
-        <div class="dashboard-footer-links"><a href="{{ url_for('admin_login') }}">Admin</a></div>
         </div>
       </main>
       {% else %}

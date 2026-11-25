@@ -217,7 +217,7 @@
     "completed services": "सेवाएँ पूरी हुईं",
     "Start next": "अगला शुरू करें",
     "CUSTOMER ENTRY": "ग्राहक प्रवेश",
-    "Join your queue": "आपकी कतार में शामिल हों",
+    "Join the queue": "कतार में शामिल हों",
     "Scan to find this listing and join the queue.": "इस लिस्टिंग को खोजने और कतार में शामिल होने के लिए स्कैन करें।",
     "Your listing QR code will be available after approval.": "अनुमोदन के बाद आपकी लिस्टिंग का QR कोड उपलब्ध होगा।",
     "YOUR PLACE": "आपकी जगह",
