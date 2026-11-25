@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="description" content="How customers and providers use YouAreNext, in pictures." />
+    <title>How to use — YouAreNext</title>
+    <script>try{var t=window.localStorage.getItem("smartqueue.theme");if(t&&t!=="classic")document.documentElement.dataset.theme=t;}catch(e){}</script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script defer src="{{ url_for('static', filename='i18n.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='theme.js') }}"></script>
+    <link rel="icon" type="image/png" href="{{ url_for('branding_asset', asset_name='favicon.png', v='3') }}" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="{{ url_for('home') }}" aria-label="YouAreNext home">
+            <img class="brand-logo" src="{{ url_for('branding_asset', asset_name='logo.png', v='3') }}" alt="YouAreNext" />
+          </a>
+        </div>
+      </header>
+      <main class="content-page guide-page">
+        <p class="eyebrow">HOW TO USE</p>
+        <h1>How YouAreNext works</h1>
+        <p class="content-intro">One queue, two sides. Pick yours — mostly pictures, very little reading.</p>
+        <div class="queue-filters guide-tabs" role="tablist" aria-label="Guide sections">
+          <button class="queue-filter is-selected" type="button" role="tab" aria-selected="true" data-guide-tab="customers">For customers</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-guide-tab="providers">For providers</button>
+        </div>
+
+        <section data-guide-panel="customers">
+          <h2 class="guide-heading">Join a queue</h2>
+          <div class="how-diagram" aria-label="How joining a queue works">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🔍</span><strong>Find your place</strong><small>Search salons, clinics and cafés near you.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🎫</span><strong>Join the queue</strong><small>Tap Join queue and pick your service.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">👀</span><strong>Track your turn</strong><small>See your number and the live wait time.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🔔</span><strong>It's your turn</strong><small>Walk in when you're called. No standing in line.</small></div>
+          </div>
+          <h2 class="guide-heading">At the shop</h2>
+          <div class="how-diagram" aria-label="How joining at the shop works">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📷</span><strong>Scan or tap</strong><small>Scan the QR at the shop, or join from home.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">☑️</span><strong>Pick your service</strong><small>Choose one or more services.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🎫</span><strong>Get your spot</strong><small>See your number and the live wait time.</small></div>
+          </div>
+          <div class="guide-cards">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">⭐</span><strong>Rate your visit</strong><small>After a visit, open Rate &amp; review and tap the stars.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🚪</span><strong>Leave anytime</strong><small>Tap Leave queue if your plans change.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">♥</span><strong>Save favorites</strong><small>Tap the heart on a place to find it faster.</small></div>
+          </div>
+        </section>
+
+        <section data-guide-panel="providers" hidden>
+          <h2 class="guide-heading">Set up once</h2>
+          <div class="how-diagram" aria-label="How setting up as a provider works">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📝</span><strong>Register your business</strong><small>Sign up as a provider with your services.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">✅</span><strong>Get approved</strong><small>We check and approve your listing.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🕘</span><strong>Add hours &amp; services</strong><small>Set opening hours and time per service.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🟢</span><strong>Open your queue</strong><small>Tap Open for walk-ins on your dashboard.</small></div>
+          </div>
+          <h2 class="guide-heading">Run your day</h2>
+          <div class="how-diagram" aria-label="How running the queue works">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📱</span><strong>Customers join</strong><small>From the app, your QR code, or walk-ins.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">👆</span><strong>Start next</strong><small>One tap calls the next customer.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🛎️</span><strong>Serve</strong><small>Serve one or many at the same time.</small></div>
+            <span class="how-arrow" aria-hidden="true">→</span>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">✅</span><strong>Complete</strong><small>Finish to free the next spot.</small></div>
+          </div>
+          <h2 class="guide-heading">Configure in Settings</h2>
+          <div class="guide-cards">
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🕘</span><strong>Opening hours</strong><small>Settings → Your day: open, close and buffer time.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">👥</span><strong>Staff serving</strong><small>Settings: how many customers you serve at once.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">⏱️</span><strong>Time per service</strong><small>Settings: minutes per service, for better waits.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📷</span><strong>Your QR code</strong><small>Queue tab: print it for your counter.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🚶</span><strong>Walk-ins</strong><small>Queue tab: add in-person customers yourself.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">🔒</span><strong>Private listing</strong><small>Settings: hide from search, join by QR only.</small></div>
+            <div class="how-node"><span class="how-node-icon" aria-hidden="true">📊</span><strong>Reports &amp; reviews</strong><small>Reports tab: your day in numbers and stars.</small></div>
+          </div>
+        </section>
+      </main>
+      <footer class="page-footer">
+        <nav><a href="{{ url_for('home') }}">Home</a><a href="{{ url_for('how_to_use') }}">How to use</a><a href="{{ url_for('contact') }}">Contact us</a><a href="{{ url_for('privacy_terms') }}">Privacy &amp; terms</a></nav>
+        <span>© 2026 YouAreNext. Your time is yours.</span>
+      </footer>
+    </div>
+    <script>
+      (function () {
+        var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-guide-tab]"));
+        var panels = Array.prototype.slice.call(document.querySelectorAll("[data-guide-panel]"));
+        function select(name) {
+          buttons.forEach(function (button) {
+            var on = button.dataset.guideTab === name;
+            button.classList.toggle("is-selected", on);
+            button.setAttribute("aria-selected", String(on));
+          });
+          panels.forEach(function (panel) { panel.hidden = panel.dataset.guidePanel !== name; });
+          try { window.localStorage.setItem("smartqueue.guideTab", name); } catch (e) {}
+        }
+        buttons.forEach(function (button) {
+          button.addEventListener("click", function () { select(button.dataset.guideTab); });
+        });
+        var saved = null;
+        try { saved = window.localStorage.getItem("smartqueue.guideTab"); } catch (e) {}
+        if (saved === "providers") select("providers");
+      })();
+    </script>
+  </body>
+</html>

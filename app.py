@@ -1478,6 +1478,10 @@ def create_app(test_config=None):
             favorite_ids={str(item) for item in user.get("favoriteProviderIds", [])} if user and user.get("role") == "customer" else set(),
         )
 
+    @app.get("/how-to-use")
+    def how_to_use():
+        return render_template("how_to_use.html")
+
     @app.get("/contact")
     def contact():
         return render_template("contact.html")

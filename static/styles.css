@@ -223,6 +223,12 @@ h1, h2, h3, p { margin-top: 0; }
 .how-arrow { align-self: center; color: var(--accent-mid); font-size: 18px; font-weight: 700; }
 
 .content-page { width: min(760px, calc(100% - 36px)); margin: 0 auto; padding: 48px 0 56px; }
+.guide-tabs { margin: 6px 0 4px; }
+[data-guide-panel][hidden] { display: none !important; }
+.guide-heading { margin: 26px 0 12px; font-size: 18px; }
+.guide-page .how-diagram { margin-bottom: 6px; }
+.guide-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 18px; }
+@media (max-width: 640px) { .guide-page .how-diagram { flex-wrap: wrap; } .guide-page .how-arrow { display: none; } .guide-page .how-node { flex: 1 1 40%; } }
 .content-page h1 { margin: 0 0 10px; font-family: var(--display); font-size: clamp(30px, 6vw, 40px); letter-spacing: -1.2px; }
 .content-intro { margin: 0 0 14px; color: #737b73; font-size: 14px; line-height: 1.65; }
 .content-updated { margin: 0 0 26px; color: #8a9188; font-size: 12px; }

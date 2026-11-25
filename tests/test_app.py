@@ -468,6 +468,19 @@ class ApiTests(unittest.TestCase):
         script.close()
         styles.close()
 
+    def test_how_to_use_guide_page(self):
+        page = self.client.get("/how-to-use")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"data-guide-tab", page.data)
+        self.assertIn(b"For customers", page.data)
+        self.assertIn(b"For providers", page.data)
+        self.assertIn(b"Register your business", page.data)
+        self.assertIn(b"how-diagram", page.data)
+        home = self.client.get("/")
+        self.assertIn(b'href="/how-to-use"', home.data)
+        script = self.client.get("/static/i18n.js")
+        self.assertIn("अपना व्यवसाय रजिस्टर करें".encode(), script.data)
+
     def test_language_picker_assets_are_served(self):
         for path in ("/", "/login", "/register", "/reset-password", "/admin/login"):
             page = self.client.get(path)
