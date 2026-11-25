@@ -2353,6 +2353,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"data-admin-reports", page.data)
         self.assertIn(b"Activity reports", page.data)
+        for tab in (b"approvals", b"ads", b"reports"):
+            self.assertIn(b'data-admin-tab="' + tab + b'"', page.data)
+            self.assertIn(b'data-admin-panel="' + tab + b'"', page.data)
+        self.assertIn(b'id="admin-health-mix"', page.data)
+        self.assertIn(b'id="admin-health-bars"', page.data)
+        self.assertIn(b"Business health", page.data)
 
     def test_private_listing_hides_discovery_but_keeps_qr_walk_in_and_join(self):
         owner = self.create_account("provider", "private-listing@example.com")

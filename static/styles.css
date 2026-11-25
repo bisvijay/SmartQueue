@@ -377,7 +377,27 @@ h1, h2, h3, p { margin-top: 0; }
 .report-service-row span:nth-child(2), .report-service-row span:nth-child(3) { min-width: 74px; text-align: right; }
 .report-service-head { border-top: none; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .report-empty { color: var(--muted); font-size: 12px; }
+.admin-tabs { margin: 4px 0 18px; }
+[data-admin-panel][hidden] { display: none !important; }
 .admin-report-heading { margin: 18px 0 6px; font-size: 13px; color: var(--ink); }
+.health-mix { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: #eceee9; margin-top: 4px; }
+.health-mix .seg-served { background: var(--green); }
+.health-mix .seg-noshow { background: #d97706; }
+.health-mix .seg-removed { background: #b3402a; }
+.health-mix .seg-cleared { background: #9aa39c; }
+.health-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.health-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.health-legend-item i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.health-legend-item i.seg-served { background: var(--green); }
+.health-legend-item i.seg-noshow { background: #d97706; }
+.health-legend-item i.seg-removed { background: #b3402a; }
+.health-legend-item i.seg-cleared { background: #9aa39c; }
+.health-bars { margin-top: 12px; display: grid; gap: 7px; }
+.health-bar-row { display: grid; grid-template-columns: minmax(110px, 180px) 1fr auto; align-items: center; gap: 10px; font-size: 12px; }
+.health-bar-name { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.health-bar-track { height: 9px; border-radius: 999px; background: #eceee9; overflow: hidden; }
+.health-bar-fill { height: 100%; border-radius: 999px; background: var(--green); }
+.health-bar-value { color: var(--muted); min-width: 64px; text-align: right; }
 .admin-report-table-wrap { overflow-x: auto; }
 .report-table td:first-child { font-weight: 600; color: var(--ink); }
 .my-queue-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }

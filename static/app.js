@@ -694,6 +694,36 @@
 
   const adminDashboard = document.querySelector("[data-admin-dashboard]");
   if (adminDashboard) {
+    const adminTabs = [...adminDashboard.querySelectorAll("[data-admin-tab]")];
+    const adminPanels = [...adminDashboard.querySelectorAll("[data-admin-panel]")];
+    function selectAdminTab(name) {
+      adminTabs.forEach((tab) => {
+        const selected = tab.dataset.adminTab === name;
+        tab.classList.toggle("is-selected", selected);
+        tab.setAttribute("aria-selected", String(selected));
+      });
+      adminPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.adminPanel !== name;
+      });
+      try {
+        window.localStorage.setItem("smartqueue.adminTab", name);
+      } catch (error) {
+        // Storage unavailable; tabs still work for this visit.
+      }
+    }
+    if (adminTabs.length) {
+      adminTabs.forEach((tab) => {
+        tab.addEventListener("click", () => selectAdminTab(tab.dataset.adminTab));
+      });
+      let initialTab = "approvals";
+      try {
+        const saved = window.localStorage.getItem("smartqueue.adminTab");
+        if (adminTabs.some((tab) => tab.dataset.adminTab === saved)) initialTab = saved;
+      } catch (error) {
+        // Storage unavailable; start on Approvals.
+      }
+      selectAdminTab(initialTab);
+    }
     const adminReports = adminDashboard.querySelector("[data-admin-reports]");
     if (adminReports) {
       const adminReportStats = adminReports.querySelector("#admin-report-stats");
@@ -746,6 +776,62 @@
             adminAppendText(box, "span", label);
             adminAppendText(box, "strong", String(value));
             adminReportStats.append(box);
+          }
+          const healthMix = adminReports.querySelector("#admin-health-mix");
+          const healthLegend = adminReports.querySelector("#admin-health-legend");
+          const healthBars = adminReports.querySelector("#admin-health-bars");
+          healthMix.replaceChildren();
+          healthLegend.replaceChildren();
+          healthBars.replaceChildren();
+          const outcomes = [
+            ["Served", totals.served, "seg-served"],
+            ["No-shows", totals.noShows, "seg-noshow"],
+            ["Removed", totals.removed, "seg-removed"],
+            ["Cleared at day end", totals.clearedDayEnd, "seg-cleared"],
+          ];
+          const outcomeTotal = outcomes.reduce((sum, [, count]) => sum + count, 0);
+          for (const [label, count, className] of outcomes) {
+            if (!count || !outcomeTotal) continue;
+            const segment = document.createElement("div");
+            segment.className = className;
+            segment.style.width = `${(count / outcomeTotal) * 100}%`;
+            healthMix.append(segment);
+            const item = document.createElement("span");
+            item.className = "health-legend-item";
+            const dot = document.createElement("i");
+            dot.className = className;
+            item.append(dot);
+            item.append(document.createTextNode(`${label}: ${count} (${Math.round((count / outcomeTotal) * 100)}%)`));
+            healthLegend.append(item);
+          }
+          if (!outcomeTotal) {
+            const note = document.createElement("p");
+            note.className = "report-empty";
+            note.textContent = "No completed outcomes in this period yet.";
+            healthBars.append(note);
+          }
+          const maxServed = Math.max(0, ...report.byProvider.map((row) => row.served));
+          const activeProviders = report.byProvider
+            .filter((row) => row.served || row.joined)
+            .slice(0, 10);
+          for (const row of activeProviders) {
+            const barRow = document.createElement("div");
+            barRow.className = "health-bar-row";
+            const name = document.createElement("span");
+            name.className = "health-bar-name";
+            name.setAttribute("data-i18n-name", "");
+            name.textContent = row.name;
+            const track = document.createElement("div");
+            track.className = "health-bar-track";
+            const fill = document.createElement("div");
+            fill.className = "health-bar-fill";
+            fill.style.width = maxServed ? `${Math.max(3, (row.served / maxServed) * 100)}%` : "0%";
+            track.append(fill);
+            const value = document.createElement("span");
+            value.className = "health-bar-value";
+            value.textContent = `${row.served} served`;
+            barRow.append(name, track, value);
+            healthBars.append(barRow);
           }
           adminReportCategories.replaceChildren();
           for (const row of report.byCategory) {

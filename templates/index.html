@@ -425,7 +425,12 @@
           {% set avg_wait = ((waits|sum / (waits|length or 1))|round|int) %}
           {{ metric('Avg. wait time', avg_wait|string + ' min', 'Across approved providers', '↘') }}
         </div>
-        <section class="dashboard-card admin-provider-list">
+        <div class="queue-filters admin-tabs" role="tablist" aria-label="Admin sections">
+          <button class="queue-filter is-selected" type="button" role="tab" aria-selected="true" data-admin-tab="approvals">Approvals</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-admin-tab="ads">Advertisements</button>
+          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-admin-tab="reports">Reports</button>
+        </div>
+        <section class="dashboard-card admin-provider-list" data-admin-panel="approvals">
           <div class="dashboard-card-heading"><div><p class="eyebrow">MODERATION QUEUE</p><h2>Provider listings</h2></div></div>
           {% if admin_providers %}
           {% for provider in admin_providers %}
@@ -452,7 +457,7 @@
           <p>No provider listings to review.</p>
           {% endif %}
         </section>
-        <section class="dashboard-card ads-admin-card" data-ads-admin>
+        <section class="dashboard-card ads-admin-card" data-ads-admin data-admin-panel="ads" hidden>
           <div class="dashboard-card-heading"><div><p class="eyebrow">PROMOTIONS</p><h2>Advertisements</h2></div><button class="button button-dark" type="button" id="ads-new">New advertisement</button></div>
           <div class="ads-filters">
             <label>Status
@@ -551,7 +556,7 @@
           </div>
           <p class="inline-notice" id="ads-notice" role="status" hidden></p>
         </section>
-        <section class="dashboard-card admin-reports-card" data-admin-reports>
+        <section class="dashboard-card admin-reports-card" data-admin-reports data-admin-panel="reports" hidden>
           <div class="dashboard-card-heading"><div><p class="eyebrow">PLATFORM REPORTS</p><h2>Activity reports</h2></div><span class="live-tag" id="admin-report-label"></span></div>
           <div class="queue-filters" role="group" aria-label="Report period">
             <button class="queue-filter is-selected" type="button" data-admin-report-period="day" aria-pressed="true">Today</button>
@@ -560,6 +565,10 @@
             <button class="queue-filter" type="button" data-admin-report-period="all" aria-pressed="false">All time</button>
           </div>
           <div class="report-stats" id="admin-report-stats"></div>
+          <h3 class="admin-report-heading">Business health</h3>
+          <div class="health-mix" id="admin-health-mix"></div>
+          <div class="health-legend" id="admin-health-legend"></div>
+          <div class="health-bars" id="admin-health-bars"></div>
           <h3 class="admin-report-heading">By category</h3>
           <div class="admin-report-table-wrap"><table class="ads-table report-table"><thead><tr><th>Category</th><th>Providers</th><th>Served</th><th>Joined</th><th>No-shows</th><th>Removed</th><th>Avg. wait</th><th>Avg. service</th></tr></thead><tbody id="admin-report-categories"></tbody></table></div>
           <h3 class="admin-report-heading">By provider</h3>
