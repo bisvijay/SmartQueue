@@ -314,6 +314,7 @@
           <section class="dashboard-card provider-qr-card" data-provider-panel="queue">
             <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
+            <div class="ad-slot ad-slot-dashboard" data-ad-placement="dashboard" data-ad-provider="{{ provider.id }}" data-ad-category="{{ provider.category }}" hidden></div>
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
             <p class="provider-qr-name" data-i18n-name>{{ provider.name }}</p>
             {% if provider.privateListing %}
@@ -321,7 +322,6 @@
             {% else %}
             <p>Scan to find this listing and join the queue.</p>
             {% endif %}
-            <div class="ad-slot ad-slot-dashboard" data-ad-placement="dashboard" data-ad-provider="{{ provider.id }}" data-ad-category="{{ provider.category }}" hidden></div>
             {% else %}
             <p>Your listing QR code will be available after approval.</p>
             {% endif %}
