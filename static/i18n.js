@@ -219,6 +219,7 @@
     "CUSTOMER ENTRY": "ग्राहक प्रवेश",
     "Join the queue": "कतार में शामिल हों",
     "VISIT COMPLETED": "विज़िट पूरी हुई",
+    "Rate & review": "रेट करें और समीक्षा करें",
     "You rated this visit": "आपने इस विज़िट को रेट किया",
     "Write a comment (optional)": "टिप्पणी लिखें (वैकल्पिक)",
     "Submit review": "समीक्षा भेजें",

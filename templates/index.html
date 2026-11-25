@@ -104,7 +104,13 @@
             </label>
             <button class="search-submit" aria-label="Show search results" id="search-submit">→</button>
           </div>
-          <div class="category-row" role="group" aria-label="Filter providers by category">
+          {% if reviewable_visits %}
+          <div class="queue-filters customer-tabs" role="tablist" aria-label="Home sections">
+            <button class="queue-filter is-selected" type="button" role="tab" aria-selected="true" data-customer-tab="discover">Discover</button>
+            <button class="queue-filter" type="button" role="tab" aria-selected="false" data-customer-tab="reviews">Rate & review <span data-review-count>({{ reviewable_visits|length }})</span></button>
+          </div>
+          {% endif %}
+          <div class="category-row" role="group" aria-label="Filter providers by category" data-customer-panel="discover">
             {% for label, icon in [('All services', '✳'), ('Salon', '✂'), ('Healthcare', '✚'), ('Food & drink', '☕'), ('Government', '⌂')] %}
             <button class="category-chip {% if loop.first %}selected{% endif %}" data-category="{{ label }}" aria-pressed="{{ 'true' if loop.first else 'false' }}"><span aria-hidden="true">{{ icon }}</span>{{ label }}</button>
             {% endfor %}
@@ -115,7 +121,7 @@
           </div>
 
           {% if my_queues %}
-          <div id="my-queue">
+          <div id="my-queue" data-customer-panel="discover">
           <div class="my-queue-actions"><button class="button button-outline" id="refresh-my-queue" type="button">Refresh</button></div>
           {% for item in my_queues %}
           {% set queue = item.queue %}
@@ -140,7 +146,7 @@
           {% endif %}
 
           {% if reviewable_visits %}
-          <div id="visit-reviews">
+          <div id="visit-reviews" data-customer-panel="reviews" hidden>
           {% for item in reviewable_visits %}
           <section class="my-queue panel review-panel" data-review-panel data-visit-id="{{ item.queue.id }}" data-provider-id="{{ item.provider.id }}">
             <div class="queue-panel-left">
@@ -160,17 +166,18 @@
               {% endif %}
               </div>
             </div>
+            <button type="button" class="review-dismiss" data-dismiss-review aria-label="Hide this review prompt" title="Hide">✕</button>
           </section>
           {% endfor %}
           </div>
           {% endif %}
 
-          <div class="results-heading">
+          <div class="results-heading" data-customer-panel="discover">
             <div><h2>On your radar <span id="result-count">{{ providers|length }}</span></h2><p>Good places, with a little less guesswork.</p></div>
             <button class="sort-button" id="all-nearby">All nearby <span aria-hidden="true">⌄</span></button>
           </div>
           {% if providers %}
-          <div class="provider-grid" id="provider-grid">
+          <div class="provider-grid" id="provider-grid" data-customer-panel="discover">
             {% for provider in providers %}
             <article class="provider-card" data-provider-id="{{ provider.id }}" data-provider="{{ provider|tojson|forceescape }}" data-category="{{ provider.category }}" data-favorite="{{ 'true' if provider.id|string in favorite_ids else 'false' }}">
               <div class="provider-art {{ provider.accent }}">
@@ -220,12 +227,12 @@
             </article>
             {% endfor %}
           </div>
-          <div class="empty-state" id="empty-state" hidden>
+          <div class="empty-state" id="empty-state" data-customer-panel="discover" hidden>
             <span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Try another search or choose a different category.</p>
             <button class="button button-dark" id="clear-filters">Clear filters</button>
           </div>
           {% else %}
-          <div class="empty-state"><span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Add providers to the data store to see them here.</p></div>
+          <div class="empty-state" data-customer-panel="discover"><span aria-hidden="true">⌕</span><h3>No places found just yet</h3><p>Add providers to the data store to see them here.</p></div>
           {% endif %}
           <div class="demo-notice"><span aria-hidden="true">ⓘ</span><p><strong>Live queues.</strong> Counts and wait times update as businesses serve their customers.</p></div>
         </section>

@@ -1412,7 +1412,9 @@ def create_app(test_config=None):
             completed = [
                 entry
                 for entry in store.list("queues")
-                if entry.get("customerId") == user["id"] and entry.get("status") == "completed"
+                if entry.get("customerId") == user["id"]
+                and entry.get("status") == "completed"
+                and not entry.get("reviewDismissed")
             ]
             completed.sort(
                 key=lambda entry: entry.get("completedAt") or entry.get("createdAt", ""),
@@ -2258,6 +2260,18 @@ def create_app(test_config=None):
             refresh_provider_metrics(provider)
             store.put("providers", str(provider["id"]), provider, provider)
             return jsonify(queue=queue, providers=store.list("providers")), 201
+
+    @app.post("/api/queues/<queue_id>/dismiss-review")
+    def dismiss_review_prompt(queue_id):
+        user = require_user("customer")
+        if not CLIENT_ID.fullmatch(queue_id):
+            raise ApiError(400, "A valid queue ID is required.")
+        visit = store.get("queues", queue_id)
+        if not visit or visit.get("customerId") != user["id"]:
+            raise ApiError(404, "Visit not found.")
+        visit["reviewDismissed"] = True
+        store.put("queues", visit["id"], visit, visit)
+        return jsonify(ok=True)
 
     @app.delete("/api/queues/<queue_id>")
     def leave_queue(queue_id):

@@ -2265,6 +2265,52 @@ class ApiTests(unittest.TestCase):
         migration = Path("migrations/006_customer_reviews.sql").read_text()
         self.assertIn("customer_reviews", migration)
 
+    def test_review_prompt_tab_and_dismiss(self):
+        provider_user = self.create_account("provider", "dismiss-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.client.post("/logout")
+        self.fresh_csrf()
+        self.create_account("customer", "dismiss-customer@example.com")
+        self.relogin("dismiss-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+        visit_id = joined.json["queue"]["id"]
+        self.client.post("/logout")
+        self.relogin("dismiss-owner@example.com")
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}/queues/{visit_id}", json={"action": "serve"}
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/providers/{provider_id}/queues/{visit_id}", json={"action": "complete"}
+            ).status_code,
+            200,
+        )
+        self.client.post("/logout")
+
+        # Another customer cannot dismiss this customer's prompt.
+        self.fresh_csrf()
+        self.create_account("customer", "dismiss-other@example.com")
+        self.relogin("dismiss-other@example.com")
+        self.assertEqual(self.client.post(f"/api/queues/{visit_id}/dismiss-review").status_code, 404)
+        self.client.post("/logout")
+
+        # The prompt sits behind the Rate & review tab, and dismissing it
+        # removes it (and the tab) from the home page for good.
+        self.relogin("dismiss-customer@example.com")
+        home = self.client.get("/")
+        self.assertIn(b"data-customer-tab", home.data)
+        self.assertIn(b"data-review-panel", home.data)
+        dismissed = self.client.post(f"/api/queues/{visit_id}/dismiss-review")
+        self.assertEqual(dismissed.status_code, 200, dismissed.get_data(as_text=True))
+        self.assertTrue(self.store.get("queues", visit_id)["reviewDismissed"])
+        home = self.client.get("/")
+        self.assertNotIn(b"data-review-panel", home.data)
+        self.assertNotIn(b"data-customer-tab", home.data)
+
     def test_provider_reports_periods_and_services(self):
         provider_user = self.create_account("provider", "reports-owner@example.com")
         provider_id = str(provider_user["providerId"])

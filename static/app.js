@@ -225,6 +225,47 @@
     myQueueRefresh.addEventListener("click", () => window.location.reload());
   }
 
+  if (document.querySelector("[data-customer-tab]")) {
+    const selectCustomerTab = (name) => {
+      document.querySelectorAll("[data-customer-tab]").forEach((button) => {
+        const selected = button.dataset.customerTab === name;
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-selected", String(selected));
+      });
+      document.querySelectorAll("[data-customer-panel]").forEach((panel) => {
+        if (panel.dataset.customerPanel === name) {
+          if (panel.id !== "empty-state") panel.hidden = false;
+        } else {
+          panel.hidden = true;
+        }
+      });
+      if (name === "discover" && typeof filterProviders === "function") filterProviders();
+    };
+    document.querySelectorAll("[data-customer-tab]").forEach((button) => {
+      button.addEventListener("click", () => selectCustomerTab(button.dataset.customerTab));
+    });
+    document.querySelectorAll("[data-dismiss-review]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const panel = button.closest("[data-review-panel]");
+        try {
+          await api(`/api/queues/${encodeURIComponent(panel.dataset.visitId)}/dismiss-review`, { method: "POST" });
+        } catch (error) {
+          showError(error.message);
+          return;
+        }
+        panel.remove();
+        const remaining = document.querySelectorAll("[data-review-panel]").length;
+        if (!remaining) {
+          document.querySelector(".customer-tabs")?.remove();
+          selectCustomerTab("discover");
+        } else {
+          const badge = document.querySelector("[data-review-count]");
+          if (badge) badge.textContent = `(${remaining})`;
+        }
+      });
+    });
+  }
+
   document.querySelectorAll("[data-review-form]").forEach((form) => {
     const panel = form.closest("[data-review-panel]");
     const stars = [...form.querySelectorAll("[data-star]")];
