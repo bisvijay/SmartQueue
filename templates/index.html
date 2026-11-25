@@ -263,7 +263,6 @@
         </div>
         <div class="queue-filters dashboard-tabs" role="tablist" aria-label="Dashboard sections">
           <button class="queue-filter is-selected" type="button" role="tab" aria-selected="true" data-provider-tab="queue">Queue</button>
-          <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="walk-ins">Walk-ins</button>
           <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="reports">Reports</button>
           <button class="queue-filter" type="button" role="tab" aria-selected="false" data-provider-tab="settings">Settings</button>
         </div>
@@ -312,7 +311,7 @@
             <p class="no-waiting" id="no-waiting" {% if provider_queue %}hidden{% endif %}>No one waiting. Enjoy the breather.</p>
             <div class="queue-table-footer"><span><strong id="people-count">{{ provider_queue|length }}</strong> customer{% if provider_queue|length != 1 %}s{% endif %} in your queue</span><button class="button button-dark" id="call-next" type="button" {% if not provider_queue or provider_queue|selectattr('status', 'equalto', 'serving')|list %}disabled{% endif %}>Start next <span aria-hidden="true">→</span></button></div>
           </section>
-          <section class="dashboard-card provider-qr-card" data-provider-panel="walk-ins" hidden>
+          <section class="dashboard-card provider-qr-card" data-provider-panel="queue">
             <div class="dashboard-card-heading"><div><p class="eyebrow">CUSTOMER ENTRY</p><h2>Join your queue</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
@@ -374,7 +373,7 @@
             </form>
             <p class="inline-notice" id="provider-settings-notice" role="status" hidden></p>
           </section>
-          <section class="dashboard-card walk-in-card" data-provider-panel="walk-ins" hidden>
+          <section class="dashboard-card walk-in-card" data-provider-panel="queue">
             <div class="dashboard-card-heading"><div><p class="eyebrow">IN PERSON</p><h2>Add walk-in</h2></div></div>
             {% if provider.approvalStatus == 'approved' %}
             <form class="provider-settings-form" id="walk-in-form">
