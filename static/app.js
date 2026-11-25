@@ -701,6 +701,12 @@
       const adminReportProviders = adminReports.querySelector("#admin-report-providers");
       const adminReportEmpty = adminReports.querySelector("#admin-report-empty");
       const adminReportButtons = [...adminReports.querySelectorAll("[data-admin-report-period]")];
+      function adminAppendText(parent, tag, text) {
+        const element = document.createElement(tag);
+        element.textContent = text;
+        parent.append(element);
+        return element;
+      }
       function adminReportRow(cells, markFirstAsName) {
         const row = document.createElement("tr");
         cells.forEach((cell, index) => {
@@ -736,8 +742,8 @@
           for (const [label, value] of stats) {
             const box = document.createElement("div");
             box.className = "report-stat";
-            appendText(box, "span", "", label);
-            appendText(box, "strong", "", String(value));
+            adminAppendText(box, "span", label);
+            adminAppendText(box, "strong", String(value));
             adminReportStats.append(box);
           }
           adminReportCategories.replaceChildren();
