@@ -2354,6 +2354,59 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"data-admin-reports", page.data)
         self.assertIn(b"Activity reports", page.data)
 
+    def test_private_listing_hides_discovery_but_keeps_qr_walk_in_and_join(self):
+        owner = self.create_account("provider", "private-listing@example.com")
+        provider_id = str(owner["providerId"])
+        self.relogin("private-listing@example.com")
+        renamed = self.client.patch(
+            f"/api/providers/{provider_id}", json={"name": "Private Test Salon Unique"}
+        )
+        self.assertEqual(renamed.status_code, 200)
+
+        listed = self.client.get("/api/providers")
+        self.assertIn(provider_id, {str(item["id"]) for item in listed.json})
+
+        updated = self.client.patch(
+            f"/api/providers/{provider_id}", json={"privateListing": True}
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertTrue(self.store.get("providers", provider_id)["privateListing"])
+        dashboard = self.client.get("/?view=provider")
+        self.assertIn(b'name="privateListing"', dashboard.data)
+        self.assertIn(b"Your listing is private", dashboard.data)
+
+        listed = self.client.get("/api/providers")
+        self.assertNotIn(provider_id, {str(item["id"]) for item in listed.json})
+        self.client.post("/logout")
+
+        self.fresh_csrf()
+        self.create_account("customer", "private-listing-customer@example.com")
+        self.relogin("private-listing-customer@example.com")
+        home = self.client.get("/")
+        self.assertNotIn(b"Private Test Salon Unique", home.data)
+
+        qr = self.client.get(f"/providers/{provider_id}/qr.svg")
+        self.assertEqual(qr.status_code, 200)
+        walk_in = self.client.get(f"/providers/{provider_id}/walk-in")
+        self.assertEqual(walk_in.status_code, 200)
+        joined = self.client.post(
+            "/api/queues", json={"providerId": provider_id, "services": ["Cut"]}
+        )
+        self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+        self.client.post("/logout")
+
+        self.relogin("private-listing@example.com")
+        bad = self.client.patch(
+            f"/api/providers/{provider_id}", json={"privateListing": "yes"}
+        )
+        self.assertEqual(bad.status_code, 400)
+        restored = self.client.patch(
+            f"/api/providers/{provider_id}", json={"privateListing": False}
+        )
+        self.assertEqual(restored.status_code, 200)
+        listed = self.client.get("/api/providers")
+        self.assertIn(provider_id, {str(item["id"]) for item in listed.json})
+
     def test_dashboard_walk_in_accepts_multiple_services(self):
         provider_user = self.create_account("provider", "walkin-owner@example.com")
         provider_id = str(provider_user["providerId"])

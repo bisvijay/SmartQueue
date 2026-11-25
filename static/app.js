@@ -600,6 +600,7 @@
             timezone: values.get("timezone"),
             bufferMinutes: Number(values.get("bufferMinutes")),
             carryForwardQueue: form.querySelector('[name="carryForwardQueue"]')?.checked === true,
+            privateListing: form.querySelector('[name="privateListing"]')?.checked === true,
           }),
         });
         window.location.reload();

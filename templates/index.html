@@ -311,7 +311,11 @@
             {% if provider.approvalStatus == 'approved' %}
             <img class="provider-qr-code" src="{{ url_for('provider_qr', provider_id=provider.id) }}" alt="QR code to discover {{ provider.name }} and join its queue" />
             <p class="provider-qr-name" data-i18n-name>{{ provider.name }}</p>
+            {% if provider.privateListing %}
+            <p>Your listing is private, so this QR code is how customers find and join your queue.</p>
+            {% else %}
             <p>Scan to find this listing and join the queue.</p>
+            {% endif %}
             <div class="ad-slot ad-slot-dashboard" data-ad-placement="dashboard" data-ad-provider="{{ provider.id }}" data-ad-category="{{ provider.category }}" hidden></div>
             {% else %}
             <p>Your listing QR code will be available after approval.</p>
@@ -339,6 +343,7 @@
               <label>Business contact email<input name="contactEmail" type="email" maxlength="254" value="{{ provider.contactEmail or '' }}" autocomplete="email" /></label>
               <label>Business contact phone <small>Indian numbers default to +91; use +country code otherwise</small><input name="contactPhone" type="tel" maxlength="24" value="{{ provider.contactPhone or '' }}" autocomplete="tel" placeholder="98765 43210" /></label>
               <p class="provider-contact-note">These details appear on your public business listing.</p>
+              <label class="checkbox-label"><input name="privateListing" type="checkbox" {% if provider.privateListing %}checked{% endif %} /> Keep my listing private <small>Hidden from the home page and search. Customers can still join your queue with your QR code or as walk-ins, and you keep full use of your dashboard.</small></label>
               <label>Services <small>Comma separated, up to 20 items (60 characters each)</small><input name="services" maxlength="500" value="{{ provider.services|join(', ') }}" /></label>
               <label>Opening hours<input name="hours" maxlength="100" required value="{{ provider.hours }}" placeholder="e.g. Mon–Sat, 9 AM–6 PM" /></label>
               <label>Average service time (minutes)<input name="serviceDuration" type="number" min="1" max="180" required value="{{ provider.serviceDuration|default(15) }}" /></label>

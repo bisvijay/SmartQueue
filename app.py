@@ -156,6 +156,11 @@ def create_app(test_config=None):
         if provider_approval_status(provider) != "approved":
             raise ApiError(403, "This provider is not approved to accept queue entries.")
 
+    def provider_is_private(provider):
+        # A private listing stays out of public discovery, but the provider
+        # keeps a working dashboard, QR code, and walk-in queue.
+        return bool(provider.get("privateListing"))
+
     def require_owned_provider(provider_id):
         user = require_user("provider")
         provider = require_provider(provider_id)
@@ -1328,6 +1333,7 @@ def create_app(test_config=None):
         providers = [
             provider for provider in all_providers
             if provider_approval_status(provider) == "approved"
+            and not provider_is_private(provider)
         ]
         for listed in providers:
             opening = parse_hhmm(listed.get("openTime"))
@@ -1639,6 +1645,7 @@ def create_app(test_config=None):
                     "bufferMinutes": 60,
                     "carryForwardQueue": False,
                     "staffCount": 1,
+                    "privateListing": False,
                     "accent": accent,
                     "icon": icon,
                     "services": services,
@@ -1706,6 +1713,7 @@ def create_app(test_config=None):
             provider_with_contact(provider)
             for provider in store.list("providers")
             if provider_approval_status(provider) == "approved"
+            and not provider_is_private(provider)
         ])
 
     @app.get("/providers/<provider_id>/qr.svg")
@@ -2266,6 +2274,7 @@ def create_app(test_config=None):
             "status", "name", "category", "address", "description", "services", "hours",
             "serviceDuration", "serviceDurations", "contactEmail", "contactPhone",
             "openTime", "closeTime", "timezone", "bufferMinutes", "carryForwardQueue", "staffCount",
+            "privateListing",
         }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
@@ -2376,6 +2385,10 @@ def create_app(test_config=None):
                 if not isinstance(body["carryForwardQueue"], bool):
                     raise ApiError(400, "Carry-forward must be true or false.")
                 provider["carryForwardQueue"] = body["carryForwardQueue"]
+            if "privateListing" in body:
+                if not isinstance(body["privateListing"], bool):
+                    raise ApiError(400, "Private listing must be true or false.")
+                provider["privateListing"] = body["privateListing"]
             if "services" in body or "serviceDuration" in body or "serviceDurations" in body:
                 # Keep per-service times in step with the final service list:
                 # drop times for services that no longer exist, and drop times
