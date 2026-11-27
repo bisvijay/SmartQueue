@@ -403,6 +403,9 @@ h1, h2, h3, p { margin-top: 0; }
 .dashboard-tabs { margin: 4px 0 18px; }
 [data-admin-panel][hidden], [data-provider-panel][hidden], [data-customer-panel][hidden] { display: none !important; }
 .customer-tabs { margin: 0 0 18px; }
+.queue-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 2px 0 12px; }
+.frozen-banner { margin: 0 0 12px; padding: 10px 12px; border: 1px dashed var(--accent-mid); border-radius: 10px; background: var(--accent-soft); font-size: 13px; }
+.frozen-banner[hidden] { display: none !important; }
 .review-dismiss { align-self: flex-start; background: none; border: 0; padding: 6px; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; }
 .admin-report-heading { margin: 18px 0 6px; font-size: 13px; color: var(--ink); }
 .health-mix { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: #eceee9; margin-top: 4px; }

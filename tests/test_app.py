@@ -2324,6 +2324,78 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn(b"data-review-panel", home.data)
         self.assertNotIn(b"data-customer-tab", home.data)
 
+    def test_freeze_blocks_joins_and_close_day_clears_waiting(self):
+        provider_user = self.create_account("provider", "freeze-owner@example.com")
+        provider_id = str(provider_user["providerId"])
+        self.client.post("/logout")
+        self.fresh_csrf()
+        self.create_account("customer", "freeze-customer@example.com")
+        self.relogin("freeze-customer@example.com")
+        joined = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        self.assertEqual(joined.status_code, 201, joined.get_data(as_text=True))
+        first_visit = joined.json["queue"]["id"]
+        self.client.post("/logout")
+
+        self.relogin("freeze-owner@example.com")
+        bad = self.client.patch(f"/api/providers/{provider_id}", json={"queueFrozen": "yes"})
+        self.assertEqual(bad.status_code, 400)
+        frozen = self.client.patch(f"/api/providers/{provider_id}", json={"queueFrozen": True})
+        self.assertEqual(frozen.status_code, 200, frozen.get_data(as_text=True))
+        self.client.post("/logout")
+
+        # While frozen: app joins and walk-ins are refused, serving continues.
+        self.relogin("freeze-customer@example.com")
+        blocked = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Cut"]})
+        self.assertEqual(blocked.status_code, 409)
+        self.assertIn("frozen", blocked.json["error"])
+        self.client.post("/logout")
+        self.relogin("freeze-owner@example.com")
+        walk_in = self.client.post(
+            f"/api/providers/{provider_id}/walk-ins",
+            json={"name": "Frozen Walk In", "phone": "98765 43210", "services": ["Cut"]},
+        )
+        self.assertEqual(walk_in.status_code, 409, walk_in.get_data(as_text=True))
+        served = self.client.patch(
+            f"/api/providers/{provider_id}/queues/{first_visit}", json={"action": "serve"}
+        )
+        self.assertEqual(served.status_code, 200, served.get_data(as_text=True))
+
+        # Unfreeze: a new customer can join again.
+        unfrozen = self.client.patch(f"/api/providers/{provider_id}", json={"queueFrozen": False})
+        self.assertEqual(unfrozen.status_code, 200)
+        self.client.post("/logout")
+        self.fresh_csrf()
+        self.create_account("customer", "freeze-customer2@example.com")
+        self.relogin("freeze-customer2@example.com")
+        joined2 = self.client.post("/api/queues", json={"providerId": provider_id, "services": ["Color"]})
+        self.assertEqual(joined2.status_code, 201, joined2.get_data(as_text=True))
+        second_visit = joined2.json["queue"]["id"]
+        self.client.post("/logout")
+
+        # Another provider cannot close this provider's day.
+        self.fresh_csrf()
+        self.create_account("provider", "freeze-other@example.com")
+        self.relogin("freeze-other@example.com")
+        denied = self.client.post(f"/api/providers/{provider_id}/close-day")
+        self.assertIn(denied.status_code, (403, 404))
+        self.client.post("/logout")
+
+        # Close for the day: waiting entries are dequeued as day_end, the
+        # serving visit is untouched, and the provider ends up Paused.
+        self.relogin("freeze-owner@example.com")
+        closed = self.client.post(f"/api/providers/{provider_id}/close-day")
+        self.assertEqual(closed.status_code, 200, closed.get_data(as_text=True))
+        self.assertEqual(closed.json["cleared"], 1)
+        waiting_entry = self.store.get("queues", second_visit)
+        self.assertEqual(waiting_entry["status"], "no_show")
+        self.assertEqual(waiting_entry["removeReason"], "day_end")
+        serving_entry = self.store.get("queues", first_visit)
+        self.assertEqual(serving_entry["status"], "serving")
+        provider = self.store.get("providers", provider_id)
+        self.assertEqual(provider["status"], "Paused")
+        self.assertFalse(provider["queueFrozen"])
+        self.assertTrue(provider["lastClosedDate"])
+
     def test_provider_reports_periods_and_services(self):
         provider_user = self.create_account("provider", "reports-owner@example.com")
         provider_id = str(provider_user["providerId"])

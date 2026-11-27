@@ -38,7 +38,9 @@
           <h1>Welcome to <span data-i18n-name>{{ provider.name }}</span></h1>
           <p class="public-walkin-intro">Add your details to join the queue. Your contact information is shared only with this provider.</p>
           {% if error %}<p class="public-walkin-error" role="alert">{{ error }}</p>{% endif %}
-          {% if provider.status != 'Open' %}
+          {% if provider.queueFrozen %}
+          <p class="public-walkin-paused" role="status">This queue is frozen right now. Please try again later.</p>
+          {% elif provider.status != 'Open' %}
           <p class="public-walkin-paused" role="status">This provider is not accepting customers right now.</p>
           {% else %}
           <form class="public-walkin-form" method="post" action="{{ url_for('public_walk_in', provider_id=provider.id) }}">

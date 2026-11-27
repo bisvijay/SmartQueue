@@ -161,6 +161,9 @@ def create_app(test_config=None):
         # keeps a working dashboard, QR code, and walk-in queue.
         return bool(provider.get("privateListing"))
 
+    def provider_is_frozen(provider):
+        return bool(provider.get("queueFrozen"))
+
     def all_customer_reviews():
         # Until migration 006 is applied the Postgres table may not exist;
         # treat that as "no reviews yet" instead of breaking pages.
@@ -579,6 +582,8 @@ def create_app(test_config=None):
         ensure_provider_approved(provider)
         if provider.get("status") != "Open":
             raise ApiError(409, "This provider is not accepting customers right now.")
+        if provider_is_frozen(provider):
+            raise ApiError(409, "This queue is frozen right now. Please try again later.")
         apply_day_rollover(provider)
 
         name = body.get("name")
@@ -1716,6 +1721,7 @@ def create_app(test_config=None):
                     "carryForwardQueue": False,
                     "staffCount": 1,
                     "privateListing": False,
+                    "queueFrozen": False,
                     "accent": accent,
                     "icon": icon,
                     "services": services,
@@ -2208,6 +2214,8 @@ def create_app(test_config=None):
             ensure_provider_approved(provider)
             if provider.get("status") != "Open":
                 raise ApiError(409, "This provider is not accepting customers right now.")
+            if provider_is_frozen(provider):
+                raise ApiError(409, "This queue is frozen right now. Please try again later.")
             apply_day_rollover(provider)
             # A customer may wait at several providers at once; only a second
             # active visit at the SAME provider is treated as already joined.
@@ -2427,7 +2435,7 @@ def create_app(test_config=None):
             "status", "name", "category", "address", "description", "services", "hours",
             "serviceDuration", "serviceDurations", "contactEmail", "contactPhone",
             "openTime", "closeTime", "timezone", "bufferMinutes", "carryForwardQueue", "staffCount",
-            "privateListing",
+            "privateListing", "queueFrozen",
         }
         if not body or set(body) - allowed:
             raise ApiError(400, "Only provider profile and queue settings can be changed.")
@@ -2542,6 +2550,11 @@ def create_app(test_config=None):
                 if not isinstance(body["privateListing"], bool):
                     raise ApiError(400, "Private listing must be true or false.")
                 provider["privateListing"] = body["privateListing"]
+            if "queueFrozen" in body:
+                if not isinstance(body["queueFrozen"], bool):
+                    raise ApiError(400, "Queue frozen must be true or false.")
+                provider["queueFrozen"] = body["queueFrozen"]
+                log.info("queue.freeze provider=%s frozen=%s", provider["id"], body["queueFrozen"])
             if "services" in body or "serviceDuration" in body or "serviceDurations" in body:
                 # Keep per-service times in step with the final service list:
                 # drop times for services that no longer exist, and drop times
@@ -2560,6 +2573,34 @@ def create_app(test_config=None):
             store.put("providers", str(provider["id"]), provider, provider)
             log.info("provider.update provider=%s fields=%s", provider["id"], ",".join(sorted(body)))
             return jsonify(providers=store.list("providers"))
+
+    @app.post("/api/providers/<provider_id>/close-day")
+    def close_provider_day(provider_id):
+        require_user("provider")
+        if not CLIENT_ID.fullmatch(provider_id):
+            raise ApiError(400, "A valid provider ID is required.")
+        with store.transaction():
+            store.lock_providers([provider_id])
+            _, provider = require_owned_provider(provider_id)
+            cleared = 0
+            now = datetime.now(timezone.utc).isoformat()
+            for entry in active_provider_queues(provider["id"]):
+                if entry.get("status") != "waiting":
+                    continue
+                entry["status"] = "no_show"
+                entry["buffer"] = False
+                entry["removedAt"] = now
+                entry["endedAt"] = now
+                entry["removeReason"] = "day_end"
+                store.put("queues", entry["id"], entry, entry)
+                cleared += 1
+                log.info("queue.day_cleared queue=%s provider=%s", entry["id"], provider["id"])
+            provider["status"] = "Paused"
+            provider["queueFrozen"] = False
+            provider["lastClosedDate"] = provider_local_now(provider).date().isoformat()
+            store.put("providers", str(provider["id"]), provider, provider)
+            log.info("queue.day_closed provider=%s cleared=%s", provider["id"], cleared)
+        return jsonify(ok=True, cleared=cleared)
 
     @app.patch("/api/providers/<provider_id>/queues/<queue_id>")
     def update_provider_queue(provider_id, queue_id):

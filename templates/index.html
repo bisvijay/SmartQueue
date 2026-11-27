@@ -216,8 +216,8 @@
                     {% endif %}
                     {% if current_user and current_user.role == 'customer' %}
                     <button class="button {% if provider.id|string in joined_ids %}button-joined{% else %}button-dark{% endif %} join-queue"
-                      data-provider-id="{{ provider.id }}" {% if provider.status != 'Open' and provider.id|string not in joined_ids %}disabled{% endif %}>
-                      {% if provider.id|string in joined_ids %}You’re in line ✓{% elif provider.status == 'Open' %}Join queue <span aria-hidden="true">↗</span>{% else %}Queue paused{% endif %}
+                      data-provider-id="{{ provider.id }}" {% if (provider.status != 'Open' or provider.queueFrozen) and provider.id|string not in joined_ids %}disabled{% endif %}>
+                      {% if provider.id|string in joined_ids %}You’re in line ✓{% elif provider.queueFrozen %}Queue frozen{% elif provider.status == 'Open' %}Join queue <span aria-hidden="true">↗</span>{% else %}Queue paused{% endif %}
                     </button>
                     {% elif not current_user %}
                     <a class="button button-dark" href="{{ url_for('login') }}">Log in to join</a>
@@ -303,6 +303,11 @@
         <div class="provider-dashboard-grid">
           <section class="dashboard-card live-queue-card" data-provider-panel="queue">
             <div class="dashboard-card-heading"><div><p class="eyebrow">RIGHT NOW</p><h2>People in queue</h2></div><span class="live-tag"><i></i><span id="provider-status">{{ provider.status }}</span></span><button class="button button-outline" id="refresh-dashboard" type="button">Refresh</button></div>
+            <div class="queue-actions">
+              <button class="button button-outline" id="toggle-freeze" type="button">{% if provider.queueFrozen %}Unfreeze queue{% else %}Freeze queue{% endif %}</button>
+              <button class="button button-outline" id="close-day" type="button">Close for the day</button>
+            </div>
+            <p class="frozen-banner" id="frozen-banner" role="status" {% if not provider.queueFrozen %}hidden{% endif %}>Queue is frozen — new customers can't join. You're still serving the current queue.</p>
             <div class="queue-filters" role="group" aria-label="Filter queue services">
               <button class="queue-filter is-selected" type="button" data-queue-filter="active" aria-pressed="true">In queue</button>
               <button class="queue-filter" type="button" data-queue-filter="completed" aria-pressed="false">Completed services</button>

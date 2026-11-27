@@ -634,6 +634,28 @@
         showError(error.message);
       }
     });
+    document.querySelector("#toggle-freeze")?.addEventListener("click", async () => {
+      const banner = document.querySelector("#frozen-banner");
+      const frozen = Boolean(banner && !banner.hidden);
+      try {
+        await api(`/api/providers/${encodeURIComponent(providerId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ queueFrozen: !frozen }),
+        });
+        window.location.reload();
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+    document.querySelector("#close-day")?.addEventListener("click", async () => {
+      if (!window.confirm("Close the queue for today? Everyone still waiting will be moved to Dequeued.")) return;
+      try {
+        await api(`/api/providers/${encodeURIComponent(providerId)}/close-day`, { method: "POST" });
+        window.location.reload();
+      } catch (error) {
+        showError(error.message);
+      }
+    });
     document.querySelector("#provider-photo-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
